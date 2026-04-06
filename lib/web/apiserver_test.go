@@ -10936,6 +10936,7 @@ func TestModeratedSession(t *testing.T) {
 func TestModeratedSessionWithMFA(t *testing.T) {
 	const RPID = "localhost"
 
+	mfaInterval := time.Second
 	presenceClock := clockwork.NewFakeClock()
 	s := newWebSuiteWithConfig(t, webSuiteConfig{
 		clock:                     clockwork.NewFakeClockAt(presenceClock.Now()),
@@ -10950,7 +10951,7 @@ func TestModeratedSessionWithMFA(t *testing.T) {
 			},
 		},
 		presenceChecker: func(ctx context.Context, term io.Writer, maintainer client.PresenceMaintainer, sessionID string, mfaCeremony *mfa.Ceremony, opts ...client.PresenceOption) error {
-			return trace.Wrap(client.RunPresenceTask(ctx, term, maintainer, sessionID, mfaCeremony, client.WithPresenceClock(presenceClock)))
+			return trace.Wrap(client.RunPresenceTask(ctx, term, maintainer, sessionID, mfaCeremony, mfaInterval, client.WithPresenceClock(presenceClock)))
 		},
 		modules: modulestest.EnterpriseModules(),
 	})
@@ -11071,7 +11072,7 @@ func TestModeratedSessionWithMFA(t *testing.T) {
 	// run the presence check a few times
 	for range 3 {
 		presenceClock.BlockUntil(1)
-		presenceClock.Advance(30 * time.Second)
+		presenceClock.Advance(mfaInterval)
 		waitForOutput(t, moderatorTerm, "Teleport > Please tap your MFA key", "waiting for moderator mfa prompt")
 
 		challenge, err := moderatorTerm.stream.ReadChallenge(protobufMFACodec{})
