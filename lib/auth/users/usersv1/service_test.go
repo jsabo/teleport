@@ -27,27 +27,33 @@ import (
 	"testing"
 	"time"
 
+	gogotypes "github.com/gogo/protobuf/types"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/google/uuid"
 	"github.com/gravitational/trace"
+	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/gravitational/teleport"
 	userspb "github.com/gravitational/teleport/api/gen/proto/go/teleport/users/v1"
 	"github.com/gravitational/teleport/api/types"
 	apievents "github.com/gravitational/teleport/api/types/events"
 	"github.com/gravitational/teleport/api/utils"
+	"github.com/gravitational/teleport/lib/auth/authclient"
 	"github.com/gravitational/teleport/lib/auth/users/usersv1"
 	"github.com/gravitational/teleport/lib/authz"
 	"github.com/gravitational/teleport/lib/backend/memory"
+	"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/events"
 	"github.com/gravitational/teleport/lib/events/eventstest"
 	"github.com/gravitational/teleport/lib/services"
 	"github.com/gravitational/teleport/lib/services/local"
 	"github.com/gravitational/teleport/lib/tlsca"
 	usagereporter "github.com/gravitational/teleport/lib/usagereporter/teleport"
+	libutils "github.com/gravitational/teleport/lib/utils"
 )
 
 type fakeAuthorizer struct {
@@ -151,13 +157,20 @@ func withEmitter(emitter apievents.Emitter) serviceOpt {
 	}
 }
 
+type testEnvBackend interface {
+	usersv1.Backend
+	services.Identity
+}
+
 type env struct {
 	*usersv1.Service
 	emitter *eventstest.ChannelEmitter
-	backend usersv1.Backend
+	backend testEnvBackend
+	clock   clockwork.Clock
 }
 
 func newTestEnv(opts ...serviceOpt) (*env, error) {
+	clock := clockwork.NewFakeClock()
 	bk, err := memory.New(memory.Config{})
 	if err != nil {
 		return nil, trace.Wrap(err, "creating memory backend")
@@ -182,6 +195,7 @@ func newTestEnv(opts ...serviceOpt) (*env, error) {
 		Authorizer: fakeAuthorizer{authorize: true},
 		Cache:      service,
 		Backend:    service,
+		Auth:       &fakeAuth{clock: clock},
 		Emitter:    emitter,
 		Reporter:   usagereporter.DiscardUsageReporter{},
 	}
@@ -199,7 +213,36 @@ func newTestEnv(opts ...serviceOpt) (*env, error) {
 		Service: svc,
 		emitter: emitter,
 		backend: service,
+		clock:   clock,
 	}, nil
+}
+
+type fakeAuth struct {
+	clock clockwork.Clock
+}
+
+func (a *fakeAuth) NewUserToken(
+	ctx context.Context, req authclient.CreateUserTokenRequest,
+) (types.UserToken, error) {
+	tokenID, err := libutils.CryptoRandomHex(defaults.TokenLenBytes)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	token, err := types.NewUserToken(tokenID)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	token.SetSubKind(req.Type)
+	token.SetExpiry(a.clock.Now().UTC().Add(req.TTL))
+	token.SetUser(req.Name)
+	token.SetCreated(a.clock.Now().UTC())
+	token.SetURL(fmt.Sprintf("https://example.com:3080/web/reset/%v", tokenID))
+
+	return token, nil
+}
+func (a *fakeAuth) DeleteUserTokens(ctx context.Context, username string) error {
+	return nil
 }
 
 func TestCreateUser(t *testing.T) {
@@ -207,7 +250,7 @@ func TestCreateUser(t *testing.T) {
 	env, err := newTestEnv()
 	require.NoError(t, err, "creating test service")
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	llama, err := types.NewUser("llama")
 	require.NoError(t, err, "creating new user llama")
@@ -262,7 +305,7 @@ func TestDeleteUser(t *testing.T) {
 	env, err := newTestEnv()
 	require.NoError(t, err, "creating test service")
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	llama, err := types.NewUser("llama")
 	require.NoError(t, err, "creating new user llama")
@@ -303,7 +346,7 @@ func TestGetUser(t *testing.T) {
 	env, err := newTestEnv(withAuthorizer(fakeAuthorizer{authzContext: authzContext}))
 	require.NoError(t, err, "creating test service")
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	llama, err := types.NewUser("llama")
 	require.NoError(t, err, "creating new user llama")
@@ -363,7 +406,7 @@ func TestUpdateUser(t *testing.T) {
 	env, err := newTestEnv()
 	require.NoError(t, err, "creating test service")
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	llama, err := types.NewUser("llama")
 	require.NoError(t, err, "creating new user llama")
@@ -411,7 +454,7 @@ func TestUpsertUser(t *testing.T) {
 	env, err := newTestEnv()
 	require.NoError(t, err, "creating test service")
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	llama, err := types.NewUser("llama")
 	require.NoError(t, err, "creating new user llama")
@@ -470,7 +513,7 @@ func TestListUsers(t *testing.T) {
 	)
 	require.NoError(t, err, "creating test service")
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create a role to assign to users for search testing.
 	accessSvc := env.backend.(interface {
@@ -611,7 +654,7 @@ func generateUserSecrets(u types.User) error {
 func TestRBAC(t *testing.T) {
 	t.Parallel()
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	llama, err := types.NewUser("llama")
 	require.NoError(t, err, "creating new user llama")
@@ -952,4 +995,108 @@ func TestRBAC(t *testing.T) {
 			require.ElementsMatch(t, test.expectChecks, test.checker.checks)
 		})
 	}
+}
+
+func TestResetUser(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	env, err := newTestEnv()
+	require.NoError(t, err, "creating test service")
+
+	capybara, err := types.NewUser("capybara")
+	require.NoError(t, err, "creating new user capybara")
+
+	_, err = env.CreateUser(ctx, &userspb.CreateUserRequest{User: capybara.(*types.UserV2)})
+	require.NoError(t, err, "creating user capybara")
+
+	err = env.backend.UpsertPassword("capybara", []byte("dummypasswordhash"))
+	require.NoError(t, err)
+
+	devId := uuid.NewString()
+	dev, err := types.NewMFADevice(
+		"mykey", devId, env.clock.Now(),
+		&types.MFADevice_Webauthn{
+			Webauthn: &types.WebauthnDevice{
+				CredentialId:             []byte("cred-" + devId),
+				PublicKeyCbor:            []byte("cbor-" + devId),
+				AttestationType:          "none",
+				Aaguid:                   []byte("aaguid"),
+				SignatureCounter:         10,
+				AttestationObject:        []byte("att-obj"),
+				ResidentKey:              true,
+				CredentialRpId:           "example.com",
+				CredentialBackupEligible: &gogotypes.BoolValue{Value: true},
+				CredentialBackedUp:       &gogotypes.BoolValue{Value: false},
+			},
+		})
+	err = env.backend.UpsertMFADevice(ctx, "capybara", dev)
+	require.NoError(t, err)
+
+	resp, err := env.ResetUser(ctx, &userspb.ResetUserRequest{
+		Name: "capybara",
+		Type: authclient.UserTokenTypeResetPassword,
+	})
+	require.NoError(t, err)
+	assert.NotNil(t, resp.PasswordResetToken)
+	assert.Equal(t, authclient.UserTokenTypeResetPassword, resp.PasswordResetToken.SubKind)
+	assert.Equal(t, "capybara", resp.PasswordResetToken.GetUser(), "capybara")
+
+	event := getLastEvent(env.emitter.C())
+	require.Equal(t, events.ResetPasswordTokenCreateEvent, event.GetType())
+	require.Equal(t, "capybara", event.(*apievents.UserTokenCreate).Name)
+	require.Equal(t, teleport.UserSystem, event.(*apievents.UserTokenCreate).User)
+
+	// verify that user has no MFA devices
+	devs, err := env.backend.GetMFADevices(ctx, "capybara", false)
+	require.NoError(t, err)
+	require.Empty(t, devs)
+
+	// verify that password was reset
+	_, err = env.backend.GetPasswordHash("capybara")
+	require.True(t, trace.IsNotFound(err), "expected trace.NotFound, got %T", err)
+}
+
+func getLastEvent(c <-chan apievents.AuditEvent) apievents.AuditEvent {
+	var event apievents.AuditEvent
+	for {
+		select {
+		case event = <-c:
+		default:
+			return event
+		}
+	}
+}
+
+func TestResetPassword(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	env, err := newTestEnv()
+	require.NoError(t, err, "creating test service")
+
+	dave, err := types.NewUser("dave")
+	require.NoError(t, err, "creating new user dave")
+
+	_, err = env.CreateUser(ctx, &userspb.CreateUserRequest{User: dave.(*types.UserV2)})
+	require.NoError(t, err, "creating user dave")
+
+	// Using the Identity service makes it easier to set up the test case.
+	err = env.backend.UpsertPassword("dave", []byte("it's full of stars!"))
+	require.NoError(t, err)
+
+	// Reset password.
+	err = env.ResetPassword(ctx, "dave")
+	require.NoError(t, err)
+
+	// Make sure that the password has been reset.
+	u, err := env.backend.GetUser(ctx, "dave", true /* withSecrets */)
+	require.NoError(t, err)
+	assert.Nil(t, u.GetLocalAuth(), "user LocalAuth not nil")
+	assert.Equal(t, types.PasswordState_PASSWORD_STATE_UNSET, u.GetPasswordState())
+
+	// Make sure that we can reset once again (i.e. we don't complain if there's
+	// no password).
+	err = env.ResetPassword(ctx, "dave")
+	require.NoError(t, err)
 }
