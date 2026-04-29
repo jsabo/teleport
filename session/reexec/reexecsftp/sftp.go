@@ -441,8 +441,29 @@ func openFileNoFollow(file string, flags int, mode os.FileMode) (*os.File, error
 	return os.NewFile(uintptr(fd), file), nil
 }
 
+func chtimes(file *os.File, atime, mtime int64) error {
+	syscallConn, err := file.SyscallConn()
+	if err != nil {
+		return err
+	}
+	var modifyErr error
+	ctrlErr := syscallConn.Control(func(fd uintptr) {
+		modifyErr = unix.Futimes(int(fd), []unix.Timeval{
+			{Sec: atime},
+			{Sec: mtime},
+		})
+	})
+	if ctrlErr != nil {
+		return ctrlErr
+	}
+	return modifyErr
+}
+
 // setstatNoFollow sets file attributes on a file without following any symlinks.
 func setstatNoFollow(file string, attrFlags sftp.FileAttrFlags, attrs *sftp.FileStat) error {
+	if !(attrFlags.Acmodtime || attrFlags.Permissions || attrFlags.Size || attrFlags.UidGid) {
+		return nil
+	}
 	mode := os.O_RDONLY
 	if attrFlags.Size {
 		// Only open in write mode if needed to truncate.
@@ -453,6 +474,16 @@ func setstatNoFollow(file string, attrFlags sftp.FileAttrFlags, attrs *sftp.File
 		return err
 	}
 	defer f.Close()
+	if attrFlags.Size {
+		if err := f.Truncate(int64(attrs.Size)); err != nil {
+			return err
+		}
+	}
+	if attrFlags.Acmodtime {
+		if err := chtimes(f, int64(attrs.Atime), int64(attrs.Mtime)); err != nil {
+			return err
+		}
+	}
 	if attrFlags.Permissions {
 		if err := f.Chmod(attrs.FileMode()); err != nil {
 			return err
@@ -461,33 +492,6 @@ func setstatNoFollow(file string, attrFlags sftp.FileAttrFlags, attrs *sftp.File
 	if attrFlags.UidGid {
 		if err := f.Chown(int(attrs.UID), int(attrs.GID)); err != nil {
 			return err
-		}
-	}
-	if attrFlags.Size {
-		if err := f.Truncate(int64(attrs.Size)); err != nil {
-			return err
-		}
-	}
-	if attrFlags.Acmodtime {
-		syscallConn, err := f.SyscallConn()
-		if err != nil {
-			return err
-		}
-		var modifyErr error
-		ctrlErr := syscallConn.Control(func(fd uintptr) {
-			if attrFlags.Acmodtime {
-				if modifyErr = unix.Futimes(int(fd), []unix.Timeval{
-					{Sec: int64(attrs.Atime)},
-					{Sec: int64(attrs.Mtime)},
-				}); modifyErr != nil {
-					return
-				}
-			}
-		})
-		if ctrlErr != nil {
-			return ctrlErr
-		} else if modifyErr != nil {
-			return modifyErr
 		}
 	}
 	return nil
