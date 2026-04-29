@@ -404,6 +404,7 @@ func openFD(fd uintptr, name string) (*os.File, error) {
 
 // openAtChild opens a file in under the parent directory, then closes the parent directory file.
 func openAtChild(parent *os.File, name string, flags int, mode os.FileMode) (*os.File, error) {
+	defer parent.Close()
 	syscallConn, err := parent.SyscallConn()
 	if err != nil {
 		return nil, err
@@ -417,9 +418,6 @@ func openAtChild(parent *os.File, name string, flags int, mode os.FileMode) (*os
 		return nil, ctrlErr
 	} else if openAtErr != nil {
 		return nil, openAtErr
-	}
-	if err := parent.Close(); err != nil {
-		return nil, err
 	}
 	return os.NewFile(uintptr(childFd), filepath.Join(parent.Name(), name)), nil
 }
