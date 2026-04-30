@@ -619,7 +619,6 @@
     "idps",
     "importcert",
     "includedir",
-    "indeterministic",
     "ingressclass",
     "initcontainers",
     "initdb",
