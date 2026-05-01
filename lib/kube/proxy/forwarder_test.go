@@ -28,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -35,6 +36,7 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -56,6 +58,10 @@ import (
 
 	"github.com/gravitational/teleport"
 	"github.com/gravitational/teleport/api/client/proto"
+	headerv1 "github.com/gravitational/teleport/api/gen/proto/go/teleport/header/v1"
+	labelv1 "github.com/gravitational/teleport/api/gen/proto/go/teleport/label/v1"
+	accessv1 "github.com/gravitational/teleport/api/gen/proto/go/teleport/scopes/access/v1"
+	scopesv1 "github.com/gravitational/teleport/api/gen/proto/go/teleport/scopes/v1"
 	"github.com/gravitational/teleport/api/types"
 	apievents "github.com/gravitational/teleport/api/types/events"
 	"github.com/gravitational/teleport/api/utils/tlsutils"
@@ -68,6 +74,8 @@ import (
 	testingkubemock "github.com/gravitational/teleport/lib/kube/proxy/testing/kube_server"
 	"github.com/gravitational/teleport/lib/modules"
 	"github.com/gravitational/teleport/lib/reversetunnelclient"
+	"github.com/gravitational/teleport/lib/scopes/access"
+	"github.com/gravitational/teleport/lib/scopes/pinning"
 	"github.com/gravitational/teleport/lib/services"
 	"github.com/gravitational/teleport/lib/services/local"
 	"github.com/gravitational/teleport/lib/tlsca"
@@ -124,6 +132,7 @@ func TestAuthenticate(t *testing.T) {
 		netConfig:       nc,
 		recordingConfig: types.DefaultSessionRecordingConfig(),
 		authPref:        authPref,
+		scopedRoles:     make(map[string]*accessv1.ScopedRole),
 	}
 
 	const (
@@ -179,10 +188,12 @@ func TestAuthenticate(t *testing.T) {
 		tunnel            reversetunnelclient.Server
 		kubeServers       []types.KubeServer
 		activeRequests    []string
+		scope             string
 
-		wantCtx     *authContext
-		wantErr     bool
-		wantAuthErr bool
+		wantCtx      *authContext
+		wantErr      bool
+		wantAuthErr  bool
+		wantAuthzErr bool
 	}{
 		{
 			desc:              "local user and cluster with active access request",
@@ -703,9 +714,176 @@ func TestAuthenticate(t *testing.T) {
 				},
 			},
 		},
+		{
+			desc:              "local scoped user and scoped cluster",
+			user:              authz.LocalUser{},
+			scope:             "/local",
+			roleKubeGroups:    []string{"kube-group-a", "kube-group-b"},
+			routeToCluster:    "local",
+			kubernetesCluster: "local",
+			haveKubeCreds:     true,
+			tunnel:            tun,
+			kubeServers: newKubeServersFromKubeClusters(
+				t,
+				&types.KubernetesClusterV3{
+					Metadata: types.Metadata{
+						Name: "local",
+						Labels: map[string]string{
+							"static_label1": "static_value1",
+							"static_label2": "static_value2",
+						},
+					},
+					Spec: types.KubernetesClusterSpecV3{
+						DynamicLabels: map[string]types.CommandLabelV2{},
+					},
+					Scope: "/local",
+				},
+			),
+			wantCtx: &authContext{
+				kubeUsers:       set.New("user-a"),
+				kubeGroups:      set.New("kube-group-a", "kube-group-b", teleport.KubeSystemAuthenticated),
+				kubeClusterName: "local",
+				kubeClusterLabels: map[string]string{
+					"static_label1": "static_value1",
+					"static_label2": "static_value2",
+				},
+				certExpires: certExpiration,
+				teleportCluster: teleportClusterClient{
+					name:       "local",
+					remoteAddr: *utils.MustParseAddr(remoteAddr),
+				},
+				kubeServers: newKubeServersFromKubeClusters(
+					t,
+					&types.KubernetesClusterV3{
+						Scope: "/local",
+						Metadata: types.Metadata{
+							Name: "local",
+							Labels: map[string]string{
+								"static_label1": "static_value1",
+								"static_label2": "static_value2",
+							},
+						},
+						Spec: types.KubernetesClusterSpecV3{
+							DynamicLabels: map[string]types.CommandLabelV2{},
+						},
+					},
+				),
+			},
+		},
+		{
+			desc:              "local unscoped user and scoped cluster",
+			user:              authz.LocalUser{},
+			roleKubeGroups:    []string{"kube-group-a", "kube-group-b"},
+			routeToCluster:    "local",
+			kubernetesCluster: "local",
+			haveKubeCreds:     true,
+			tunnel:            tun,
+			kubeServers: newKubeServersFromKubeClusters(
+				t,
+				&types.KubernetesClusterV3{
+					Metadata: types.Metadata{
+						Name: "local",
+						Labels: map[string]string{
+							"static_label1": "static_value1",
+							"static_label2": "static_value2",
+						},
+					},
+					Spec: types.KubernetesClusterSpecV3{
+						DynamicLabels: map[string]types.CommandLabelV2{},
+					},
+					Scope: "/local",
+				},
+			),
+			wantCtx: &authContext{
+				kubeUsers:       set.New("user-a"),
+				kubeGroups:      set.New("kube-group-a", "kube-group-b", teleport.KubeSystemAuthenticated),
+				kubeClusterName: "local",
+				kubeClusterLabels: map[string]string{
+					"static_label1": "static_value1",
+					"static_label2": "static_value2",
+				},
+				certExpires: certExpiration,
+				teleportCluster: teleportClusterClient{
+					name:       "local",
+					remoteAddr: *utils.MustParseAddr(remoteAddr),
+				},
+				kubeServers: newKubeServersFromKubeClusters(
+					t,
+					&types.KubernetesClusterV3{
+						Scope: "/local",
+						Metadata: types.Metadata{
+							Name: "local",
+							Labels: map[string]string{
+								"static_label1": "static_value1",
+								"static_label2": "static_value2",
+							},
+						},
+						Spec: types.KubernetesClusterSpecV3{
+							DynamicLabels: map[string]types.CommandLabelV2{},
+						},
+					},
+				),
+			},
+		},
+		{
+			desc:              "local scoped user and scoped cluster - mismatched scope",
+			user:              authz.LocalUser{},
+			scope:             "/local",
+			roleKubeGroups:    []string{"kube-group-a", "kube-group-b"},
+			routeToCluster:    "local",
+			kubernetesCluster: "local",
+			haveKubeCreds:     true,
+			tunnel:            tun,
+			kubeServers: newKubeServersFromKubeClusters(
+				t,
+				&types.KubernetesClusterV3{
+					Metadata: types.Metadata{
+						Name: "local",
+						Labels: map[string]string{
+							"static_label1": "static_value1",
+							"static_label2": "static_value2",
+						},
+					},
+					Spec: types.KubernetesClusterSpecV3{
+						DynamicLabels: map[string]types.CommandLabelV2{},
+					},
+					Scope: "/other",
+				},
+			),
+			wantAuthzErr: true,
+		},
+		{
+			desc:              "local scoped user and unscoped cluster",
+			user:              authz.LocalUser{},
+			scope:             "/local",
+			roleKubeGroups:    []string{"kube-group-a", "kube-group-b"},
+			routeToCluster:    "local",
+			kubernetesCluster: "local",
+			haveKubeCreds:     true,
+			tunnel:            tun,
+			kubeServers: newKubeServersFromKubeClusters(
+				t,
+				&types.KubernetesClusterV3{
+					Metadata: types.Metadata{
+						Name: "local",
+						Labels: map[string]string{
+							"static_label1": "static_value1",
+							"static_label2": "static_value2",
+						},
+					},
+					Spec: types.KubernetesClusterSpecV3{
+						DynamicLabels: map[string]types.CommandLabelV2{},
+					},
+				},
+			),
+			wantAuthzErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.desc, func(t *testing.T) {
+			// if strings.Contains(tt.desc, "local scoped user and scoped cluster") {
+			// 	t.Skip()
+			// }
 			f.cfg.ReverseTunnelSrv = tt.tunnel
 			ap.kubeServers = tt.kubeServers
 			roles, err := services.RoleSetFromSpec("ops", types.RoleSpecV6{
@@ -729,6 +907,32 @@ func TestAuthenticate(t *testing.T) {
 				}),
 			}
 			authorizer := mockAuthorizer{scopedCtx: authz.ScopedContextFromUnscopedContext(&authCtx)}
+			if tt.scope != "" {
+				scopePin := setupScopedKubeRoleWithAssignment(
+					t,
+					ap,
+					tt.roleKubeGroups,
+					tt.roleKubeUsers,
+					tt.scope,
+				)
+
+				checkerCtx, err := services.NewScopedAccessCheckerContext(f.ctx, &services.AccessInfo{ScopePin: scopePin}, "local", ap)
+				require.NoError(t, err)
+				authorizer.scopedCtx = &authz.ScopedContext{
+					User: user,
+					Identity: authz.WrapIdentity(
+						tlsca.Identity{
+							RouteToCluster:    tt.routeToCluster,
+							KubernetesCluster: tt.kubernetesCluster,
+							ActiveRequests:    tt.activeRequests,
+							Expires:           certExpiration,
+							ScopePin:          scopePin,
+						},
+					),
+					CheckerContext: checkerCtx,
+				}
+
+			}
 			if tt.authzErr {
 				authorizer.err = trace.AccessDenied("denied!")
 			}
@@ -759,13 +963,17 @@ func TestAuthenticate(t *testing.T) {
 			}
 
 			gotCtx, err := f.authenticate(req)
-			if tt.wantErr {
+			if tt.wantErr || tt.wantAuthErr {
 				require.Error(t, err)
 				require.Equal(t, tt.wantAuthErr, trace.IsAccessDenied(err))
 				return
 			}
 			require.NoError(t, err)
 			err = f.authorize(context.Background(), gotCtx)
+			if tt.wantAuthzErr {
+				require.Equal(t, tt.wantAuthzErr, trace.IsAccessDenied(err), "expected access denied error")
+				return
+			}
 			require.NoError(t, err)
 
 			require.Empty(t, cmp.Diff(gotCtx, tt.wantCtx,
@@ -787,6 +995,42 @@ func TestAuthenticate(t *testing.T) {
 			)
 			require.Equal(t, ctxKey, gotCtx.key())
 		})
+	}
+}
+
+func setupScopedKubeRoleWithAssignment(t *testing.T, ap *mockAccessPoint, groups, users []string, scope string) *scopesv1.Pin {
+	t.Helper()
+
+	scopeAsName := strings.ReplaceAll(strings.Trim(scope, "/"), "/", "-")
+
+	ap.scopedRoles[scopeAsName+"-role"] = &accessv1.ScopedRole{
+		Kind:    access.KindScopedRole,
+		Version: types.V1,
+		Metadata: &headerv1.Metadata{
+			Name: scopeAsName + "-role",
+		},
+		Scope: scope,
+		Spec: &accessv1.ScopedRoleSpec{
+			AssignableScopes: []string{scope},
+			Kube: &accessv1.ScopedRoleKube{
+				Users:  users,
+				Groups: groups,
+				Labels: []*labelv1.Label{
+					{
+						Name:   types.Wildcard,
+						Values: []string{types.Wildcard},
+					},
+				},
+			},
+		},
+	}
+	return &scopesv1.Pin{
+		Scope: scope,
+		AssignmentTree: pinning.AssignmentTreeFromMap(map[string]map[string][]string{
+			scope: {
+				scope: {scopeAsName + "-role"},
+			},
+		}),
 	}
 }
 
@@ -1251,6 +1495,7 @@ type mockAccessPoint struct {
 	authPref        types.AuthPreference
 	kubeServers     []types.KubeServer
 	cas             map[string]types.CertAuthority
+	scopedRoles     map[string]*accessv1.ScopedRole
 }
 
 func (ap mockAccessPoint) GetClusterNetworkingConfig(context.Context) (types.ClusterNetworkingConfig, error) {
@@ -1279,6 +1524,14 @@ func (ap mockAccessPoint) GetCertAuthorities(ctx context.Context, caType types.C
 
 func (ap mockAccessPoint) GetCertAuthority(ctx context.Context, id types.CertAuthID, loadKeys bool) (types.CertAuthority, error) {
 	return ap.cas[id.DomainName], nil
+}
+
+func (ap mockAccessPoint) GetScopedRole(ctx context.Context, req *accessv1.GetScopedRoleRequest) (*accessv1.GetScopedRoleResponse, error) {
+	return &accessv1.GetScopedRoleResponse{Role: ap.scopedRoles[req.GetName()]}, nil
+}
+
+func (ap mockAccessPoint) ListScopedRoles(ctx context.Context, req *accessv1.ListScopedRolesRequest) (*accessv1.ListScopedRolesResponse, error) {
+	return &accessv1.ListScopedRolesResponse{Roles: slices.Collect(maps.Values(ap.scopedRoles))}, nil
 }
 
 type mockRevTunnel struct {
