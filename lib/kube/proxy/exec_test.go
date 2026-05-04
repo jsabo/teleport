@@ -524,10 +524,6 @@ func TestExecMissingGETPermissionError(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.scope != "" && tt.interactive {
-				// TODO (eriktate): remove this skip once kube waiting containers support scopes
-				t.Skip("skipping interactive tests because waiting container are not yet supported by scopes")
-			}
 			const errorCode = http.StatusForbidden
 
 			kubeMock, err := testingkubemock.NewKubeAPIMock(
@@ -673,7 +669,6 @@ func TestExecWebsocketEndToEndErrReturn(t *testing.T) {
 		errorMessage = "pods \"api-1\" is forbidden: User \"bar\" cannot %s resource " +
 			"\"pods/exec\" in API group \"\" in the namespace \"ns\""
 		errorCode = http.StatusForbidden
-		scope     = "/test"
 	)
 
 	kubeMock, err := testingkubemock.NewKubeAPIMock(
@@ -717,7 +712,6 @@ func TestExecWebsocketEndToEndErrReturn(t *testing.T) {
 					execEvent = exec
 				}
 			},
-			Scope: scope,
 		},
 	)
 
