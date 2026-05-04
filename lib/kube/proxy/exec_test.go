@@ -68,19 +68,17 @@ var (
 )
 
 func TestExecKubeService(t *testing.T) {
+	t.Parallel()
 	kubeMock, err := testingkubemock.NewKubeAPIMock()
 	require.NoError(t, err)
 	t.Cleanup(func() { kubeMock.Close() })
 
-	t.Setenv("TELEPORT_UNSTABLE_SCOPES", "yes")
-	scope := "/test"
 	// creates a Kubernetes service with a configured cluster pointing to mock api server
 	testCtx := SetupTestContext(
 		context.Background(),
 		t,
 		TestConfig{
 			Clusters: []KubeClusterConfig{{Name: kubeCluster, APIEndpoint: kubeMock.URL}},
-			Scope:    scope,
 		},
 	)
 
@@ -121,6 +119,160 @@ func TestExecKubeService(t *testing.T) {
 		userMultiKubeUsers.GetName(),
 		kubeCluster,
 	)
+	type args struct {
+		executorBuilder func(*rest.Config, string, *url.URL) (remotecommand.Executor, error)
+		impersonateUser string
+		config          *rest.Config
+	}
+	tests := []struct {
+		name    string
+		args    args
+		wantErr bool
+	}{
+		{
+			name: "SPDY protocol",
+			args: args{
+				executorBuilder: remotecommand.NewSPDYExecutor,
+				config:          configWithSingleKubeUser,
+			},
+		},
+		{
+			name: "Websocket protocol v4",
+			args: args{
+				// We can delete the dummy client once https://github.com/kubernetes/kubernetes/pull/110142
+				// is merged into k8s go-client.
+				// For now go-client does not support connections over websockets.
+				executorBuilder: func(c *rest.Config, s string, u *url.URL) (remotecommand.Executor, error) {
+					return newWebSocketClient(c, s, u)
+				},
+				config: configWithSingleKubeUser,
+			},
+		},
+		{
+			name: "Websocket protocol v5",
+			args: args{
+				executorBuilder: func(c *rest.Config, s string, u *url.URL) (remotecommand.Executor, error) {
+					return remotecommand.NewWebSocketExecutor(c, s, u.String())
+				},
+				config: configWithSingleKubeUser,
+			},
+		},
+		{
+			name: "SPDY protocol for user with multiple kubernetes users",
+			args: args{
+				executorBuilder: remotecommand.NewSPDYExecutor,
+				config:          configMultiKubeUsers,
+				impersonateUser: "admin",
+			},
+		},
+		{
+			name: "Websocket protocol v4 for user with multiple kubernetes users",
+			args: args{
+				// We can delete the dummy client once https://github.com/kubernetes/kubernetes/pull/110142
+				// is merged into k8s go-client.
+				// For now go-client does not support connections over websockets.
+				executorBuilder: func(c *rest.Config, s string, u *url.URL) (remotecommand.Executor, error) {
+					return newWebSocketClient(c, s, u)
+				},
+				config:          configMultiKubeUsers,
+				impersonateUser: "admin",
+			},
+		},
+		{
+			name: "Websocket protocol v5 for user with multiple kubernetes users",
+			args: args{
+				executorBuilder: func(c *rest.Config, s string, u *url.URL) (remotecommand.Executor, error) {
+					return remotecommand.NewWebSocketExecutor(c, s, u.String())
+				},
+				config:          configMultiKubeUsers,
+				impersonateUser: "admin",
+			},
+		},
+		{
+			name: "SPDY protocol for user with multiple kubernetes users without specifying impersonate user",
+			args: args{
+				executorBuilder: remotecommand.NewSPDYExecutor,
+				config:          configMultiKubeUsers,
+			},
+			wantErr: true,
+		},
+		{
+			name: "Websocket protocol v5 for user with multiple kubernetes users without specifying impersonate user",
+			args: args{
+				executorBuilder: func(c *rest.Config, s string, u *url.URL) (remotecommand.Executor, error) {
+					return remotecommand.NewWebSocketExecutor(c, s, u.String())
+				},
+				config: configMultiKubeUsers,
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var (
+				stdinWrite = &bytes.Buffer{}
+				stdout     = &bytes.Buffer{}
+				stderr     = &bytes.Buffer{}
+			)
+
+			_, err = stdinWrite.Write(stdinContent)
+			require.NoError(t, err)
+
+			streamOpts := remotecommand.StreamOptions{
+				Stdin:  io.NopCloser(stdinWrite),
+				Stdout: stdout,
+				Stderr: stderr,
+				Tty:    false,
+			}
+
+			req, err := generateExecRequest(
+				generateExecRequestConfig{
+					addr:          testCtx.KubeProxyAddress(),
+					podName:       podName,
+					podNamespace:  podNamespace,
+					containerName: podContainerName,
+					cmd:           containerCommmandExecute, // placeholder for commands to execute in the dummy pod
+					options:       streamOpts,
+				},
+			)
+			require.NoError(t, err)
+			// configure the client to impersonate the user.
+			// If empty, the client ignores it.
+			tt.args.config.Impersonate.UserName = tt.args.impersonateUser
+			exec, err := tt.args.executorBuilder(tt.args.config, http.MethodPost, req.URL())
+			require.NoError(t, err)
+
+			err = exec.StreamWithContext(testCtx.Context, streamOpts)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, fmt.Sprintf("%s\n%s", podContainerName, string(stdinContent)), stdout.String())
+			require.Equal(t, fmt.Sprintf("%s\n%s", podContainerName, string(stdinContent)), stderr.String())
+		})
+	}
+}
+
+func TestExecScopedKubeService(t *testing.T) {
+	kubeMock, err := testingkubemock.NewKubeAPIMock()
+	require.NoError(t, err)
+	t.Cleanup(func() { kubeMock.Close() })
+
+	t.Setenv("TELEPORT_UNSTABLE_SCOPES", "yes")
+	scope := "/test"
+	// creates a Kubernetes service with a configured cluster pointing to mock api server
+	testCtx := SetupTestContext(
+		context.Background(),
+		t,
+		TestConfig{
+			Clusters: []KubeClusterConfig{{Name: kubeCluster, APIEndpoint: kubeMock.URL}},
+			Scope:    scope,
+		},
+	)
+
+	t.Cleanup(func() { require.NoError(t, testCtx.Close()) })
+
 	scopedWithSingleKubeUser, scopedSingleKubeUserRole := testCtx.CreateUserAndScopedRole(
 		t,
 		"scoped-"+username,
@@ -180,6 +332,7 @@ func TestExecKubeService(t *testing.T) {
 		impersonateUser string
 		config          *rest.Config
 	}
+
 	tests := []struct {
 		name    string
 		args    args
@@ -189,30 +342,11 @@ func TestExecKubeService(t *testing.T) {
 			name: "SPDY protocol",
 			args: args{
 				executorBuilder: remotecommand.NewSPDYExecutor,
-				config:          configWithSingleKubeUser,
-			},
-		},
-		{
-			name: "SPDY protocol - scoped",
-			args: args{
-				executorBuilder: remotecommand.NewSPDYExecutor,
 				config:          scopedConfigWithSingleKubeUser,
 			},
 		},
 		{
 			name: "Websocket protocol v4",
-			args: args{
-				// We can delete the dummy client once https://github.com/kubernetes/kubernetes/pull/110142
-				// is merged into k8s go-client.
-				// For now go-client does not support connections over websockets.
-				executorBuilder: func(c *rest.Config, s string, u *url.URL) (remotecommand.Executor, error) {
-					return newWebSocketClient(c, s, u)
-				},
-				config: configWithSingleKubeUser,
-			},
-		},
-		{
-			name: "Websocket protocol v4 - scoped",
 			args: args{
 				// We can delete the dummy client once https://github.com/kubernetes/kubernetes/pull/110142
 				// is merged into k8s go-client.
@@ -229,28 +363,11 @@ func TestExecKubeService(t *testing.T) {
 				executorBuilder: func(c *rest.Config, s string, u *url.URL) (remotecommand.Executor, error) {
 					return remotecommand.NewWebSocketExecutor(c, s, u.String())
 				},
-				config: configWithSingleKubeUser,
-			},
-		},
-		{
-			name: "Websocket protocol v5 - scoped",
-			args: args{
-				executorBuilder: func(c *rest.Config, s string, u *url.URL) (remotecommand.Executor, error) {
-					return remotecommand.NewWebSocketExecutor(c, s, u.String())
-				},
 				config: scopedConfigWithSingleKubeUser,
 			},
 		},
 		{
 			name: "SPDY protocol for user with multiple kubernetes users",
-			args: args{
-				executorBuilder: remotecommand.NewSPDYExecutor,
-				config:          configMultiKubeUsers,
-				impersonateUser: "admin",
-			},
-		},
-		{
-			name: "SPDY protocol for user with multiple kubernetes users - scoped",
 			args: args{
 				executorBuilder: remotecommand.NewSPDYExecutor,
 				config:          scopedConfigMultiKubeUsers,
@@ -259,19 +376,6 @@ func TestExecKubeService(t *testing.T) {
 		},
 		{
 			name: "Websocket protocol v4 for user with multiple kubernetes users",
-			args: args{
-				// We can delete the dummy client once https://github.com/kubernetes/kubernetes/pull/110142
-				// is merged into k8s go-client.
-				// For now go-client does not support connections over websockets.
-				executorBuilder: func(c *rest.Config, s string, u *url.URL) (remotecommand.Executor, error) {
-					return newWebSocketClient(c, s, u)
-				},
-				config:          configMultiKubeUsers,
-				impersonateUser: "admin",
-			},
-		},
-		{
-			name: "Websocket protocol v4 for user with multiple kubernetes users - scoped",
 			args: args{
 				// We can delete the dummy client once https://github.com/kubernetes/kubernetes/pull/110142
 				// is merged into k8s go-client.
@@ -289,16 +393,6 @@ func TestExecKubeService(t *testing.T) {
 				executorBuilder: func(c *rest.Config, s string, u *url.URL) (remotecommand.Executor, error) {
 					return remotecommand.NewWebSocketExecutor(c, s, u.String())
 				},
-				config:          configMultiKubeUsers,
-				impersonateUser: "admin",
-			},
-		},
-		{
-			name: "Websocket protocol v5 for user with multiple kubernetes users - scoped",
-			args: args{
-				executorBuilder: func(c *rest.Config, s string, u *url.URL) (remotecommand.Executor, error) {
-					return remotecommand.NewWebSocketExecutor(c, s, u.String())
-				},
 				config:          scopedConfigMultiKubeUsers,
 				impersonateUser: "admin",
 			},
@@ -307,30 +401,12 @@ func TestExecKubeService(t *testing.T) {
 			name: "SPDY protocol for user with multiple kubernetes users without specifying impersonate user",
 			args: args{
 				executorBuilder: remotecommand.NewSPDYExecutor,
-				config:          configMultiKubeUsers,
-			},
-			wantErr: true,
-		},
-		{
-			name: "SPDY protocol for user with multiple kubernetes users without specifying impersonate user - scoped",
-			args: args{
-				executorBuilder: remotecommand.NewSPDYExecutor,
 				config:          scopedConfigMultiKubeUsers,
 			},
 			wantErr: true,
 		},
 		{
 			name: "Websocket protocol v5 for user with multiple kubernetes users without specifying impersonate user",
-			args: args{
-				executorBuilder: func(c *rest.Config, s string, u *url.URL) (remotecommand.Executor, error) {
-					return remotecommand.NewWebSocketExecutor(c, s, u.String())
-				},
-				config: configMultiKubeUsers,
-			},
-			wantErr: true,
-		},
-		{
-			name: "Websocket protocol v5 for user with multiple kubernetes users without specifying impersonate user - scoped",
 			args: args{
 				executorBuilder: func(c *rest.Config, s string, u *url.URL) (remotecommand.Executor, error) {
 					return remotecommand.NewWebSocketExecutor(c, s, u.String())
@@ -813,5 +889,5 @@ func waitForSRACache(t *testing.T, srv *authtest.TLSServer, resps ...*accessv1.C
 			})
 			require.NoError(t, err)
 		}
-	}, 10*time.Second, 100*time.Millisecond)
+	}, 10*time.Second, 20*time.Millisecond)
 }
