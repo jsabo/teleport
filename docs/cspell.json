@@ -898,6 +898,7 @@
     "rdsca",
     "rdsproxy",
     "readall",
+    "readnosecrets",
     "readyz",
     "realmd",
     "reauthenticates",
