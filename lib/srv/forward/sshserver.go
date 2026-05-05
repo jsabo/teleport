@@ -701,12 +701,6 @@ func (s *Server) Serve() {
 		return
 	}
 
-	// Once the client and server connections are established, ensure we forward
-	// x11 channel requests from the server to the client.
-	if err := s.remoteClient.HandleChannelOpen(ctx, x11.ChannelRequest, s.handleX11ChannelRequest); err != nil {
-		s.logger.ErrorContext(s.Context(), "Unable to forward x11 channel requests", "error", err)
-	}
-
 	succeeded = true
 
 	// Add channel handlers immediately to avoid rejecting a channel.
@@ -1535,6 +1529,10 @@ func (s *Server) handleX11Forward(ctx context.Context, ch ssh.Channel, req *ssh.
 	// Check if the user's RBAC role allows X11 forwarding.
 	if err := s.authHandlers.CheckX11Forward(scx); err != nil {
 		return trace.Wrap(err)
+	}
+
+	if err := s.remoteClient.HandleChannelOpen(ctx, x11.ChannelRequest, s.handleX11ChannelRequest); err != nil {
+		s.logger.ErrorContext(s.Context(), "Unable to forward x11 channel requests", "error", err)
 	}
 
 	// send X11 forwarding request to remote
