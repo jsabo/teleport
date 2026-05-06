@@ -402,8 +402,8 @@ func openFD(fd uintptr, name string) (*os.File, error) {
 	return file, nil
 }
 
-// openAtChild opens a file in under the parent directory, then closes the parent directory file.
-func openAtChild(parent *os.File, name string, flags int, mode os.FileMode) (*os.File, error) {
+// openAtAndClose opens a file under the parent directory, then closes the parent directory file.
+func openAtAndClose(parent *os.File, name string, flags int, mode os.FileMode) (*os.File, error) {
 	defer parent.Close()
 	syscallConn, err := parent.SyscallConn()
 	if err != nil {
@@ -412,7 +412,12 @@ func openAtChild(parent *os.File, name string, flags int, mode os.FileMode) (*os
 	var childFd int
 	var openAtErr error
 	ctrlErr := syscallConn.Control(func(fd uintptr) {
-		childFd, openAtErr = unix.Openat(int(parent.Fd()), name, flags, uint32(mode))
+		for {
+			childFd, openAtErr = unix.Openat(int(fd), name, flags|unix.O_NOFOLLOW|unix.O_CLOEXEC, uint32(mode))
+			if !errors.Is(openAtErr, syscall.EINTR) {
+				return
+			}
+		}
 	})
 	if ctrlErr != nil {
 		return nil, ctrlErr
@@ -424,46 +429,49 @@ func openAtChild(parent *os.File, name string, flags int, mode os.FileMode) (*os
 
 // openFileNoFollow opens a file without following symlinks in any part of the path.
 func openFileNoFollow(file string, flags int, mode os.FileMode) (*os.File, error) {
-	dir, filename := filepath.Split(file)
-	absDir, err := filepath.Abs(dir)
-	if err != nil {
-		return nil, err
+	if !filepath.IsAbs(file) {
+		return nil, trace.BadParameter("file path must be absolute")
 	}
-	relDir, err := filepath.Rel(string(os.PathSeparator), absDir)
+	dir, filename := filepath.Split(file)
+	relDir, err := filepath.Rel(string(os.PathSeparator), dir)
 	if err != nil {
 		return nil, err
 	}
 	pathParts := strings.Split(relDir, string(os.PathSeparator))
-	const nofollowDirFlags = unix.O_NOFOLLOW | unix.O_DIRECTORY | unix.O_CLOEXEC
-	parent, err := os.OpenFile(string(os.PathSeparator), nofollowDirFlags, 0)
+	parent, err := os.OpenFile(string(os.PathSeparator), noFollowDirFlags, 0)
 	if err != nil {
 		return nil, err
 	}
 	// Open each directory one at a time to ensure no symlinks are followed.
 	for _, part := range pathParts {
-		parent, err = openAtChild(parent, part, nofollowDirFlags, 0)
+		parent, err = openAtAndClose(parent, part, noFollowDirFlags, 0)
 		if err != nil {
 			return nil, err
 		}
 	}
-	f, err := openAtChild(parent, filename, flags|unix.O_NOFOLLOW|unix.O_CLOEXEC|unix.O_NONBLOCK, mode)
+	f, err := openAtAndClose(parent, filename, flags|unix.O_NONBLOCK, mode)
 	if err != nil {
 		return nil, err
 	}
 	return f, nil
 }
 
-func chtimes(file *os.File, atime, mtime int64) error {
+func chtimes(file *os.File, atime, mtime time.Time) error {
 	syscallConn, err := file.SyscallConn()
 	if err != nil {
 		return err
 	}
 	var modifyErr error
 	ctrlErr := syscallConn.Control(func(fd uintptr) {
-		modifyErr = unix.Futimes(int(fd), []unix.Timeval{
-			{Sec: atime},
-			{Sec: mtime},
-		})
+		for {
+			modifyErr = unix.Futimes(int(fd), []unix.Timeval{
+				{Sec: atime.Unix()},
+				{Sec: mtime.Unix()},
+			})
+			if !errors.Is(modifyErr, syscall.EINTR) {
+				return
+			}
+		}
 	})
 	if ctrlErr != nil {
 		return ctrlErr
@@ -492,7 +500,7 @@ func setstatNoFollow(file string, attrFlags sftp.FileAttrFlags, attrs *sftp.File
 		}
 	}
 	if attrFlags.Acmodtime {
-		if err := chtimes(f, int64(attrs.Atime), int64(attrs.Mtime)); err != nil {
+		if err := chtimes(f, time.Unix(int64(attrs.Atime), 0), time.Unix(int64(attrs.Mtime), 0)); err != nil {
 			return err
 		}
 	}

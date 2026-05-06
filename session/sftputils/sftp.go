@@ -190,30 +190,32 @@ func (n *NonRecursiveDirectoryTransferError) Error() string {
 	return fmt.Sprintf("%q is a directory, but the recursive option was not passed", n.Path)
 }
 
-func setstat(file string, attrFlags sftp.FileAttrFlags, attrs *sftp.FileStat, fs FileSystem) error {
+func setstat(req *sftp.Request, fs FileSystem) error {
+	attrFlags := req.AttrFlags()
+	attrs := req.Attributes()
 	if attrFlags.Acmodtime {
 		atime := time.Unix(int64(attrs.Atime), 0)
 		mtime := time.Unix(int64(attrs.Mtime), 0)
 
-		err := fs.Chtimes(file, atime, mtime)
+		err := fs.Chtimes(req.Filepath, atime, mtime)
 		if err != nil {
 			return err
 		}
 	}
 	if attrFlags.Permissions {
-		err := fs.Chmod(file, attrs.FileMode())
+		err := fs.Chmod(req.Filepath, attrs.FileMode())
 		if err != nil {
 			return err
 		}
 	}
 	if attrFlags.UidGid {
-		err := fs.Chown(file, int(attrs.UID), int(attrs.GID))
+		err := fs.Chown(req.Filepath, int(attrs.UID), int(attrs.GID))
 		if err != nil {
 			return err
 		}
 	}
 	if attrFlags.Size {
-		err := fs.Truncate(file, int64(attrs.Size))
+		err := fs.Truncate(req.Filepath, int64(attrs.Size))
 		if err != nil {
 			return err
 		}
@@ -230,7 +232,7 @@ func HandleFilecmd(req *sftp.Request, filesys FileSystem) error {
 	}
 	switch req.Method {
 	case MethodSetStat:
-		return setstat(req.Filepath, req.AttrFlags(), req.Attributes(), filesys)
+		return setstat(req, filesys)
 	case MethodRename:
 		if req.Target == "" {
 			return os.ErrInvalid
