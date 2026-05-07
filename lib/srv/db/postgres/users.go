@@ -360,15 +360,47 @@ func (e *Engine) DeleteUser(ctx context.Context, sessionCtx *common.Session) err
 
 	logger := e.Log.With("user", sessionCtx.DatabaseUser)
 	logger.InfoContext(ctx, "Deleting PostgreSQL user.")
+	orphanedResourceOwner := sessionCtx.Database.GetOrphanedResourceOwner()
+	mustCallReassignObjectsProc := !sessionCtx.Database.IsRedshift() &&
+		sessionCtx.AutoCreateUserMode == types.CreateDatabaseUserMode_DB_USER_MODE_BEST_EFFORT_DROP &&
+		orphanedResourceOwner != ""
+
+	procedures := []string{deleteProcName, deactivateProcName}
+	if mustCallReassignObjectsProc {
+		procedures = append(procedures, reassignObjectsProcName)
+	}
 	err = withRetry(ctx, logger, func() error {
-		err := e.createProcedures(ctx, sessionCtx, conn, []string{deleteProcName, deactivateProcName})
+		err := e.createProcedures(ctx, sessionCtx, conn, procedures)
 		return trace.Wrap(err)
 	})
 	if err != nil {
 		return trace.Wrap(err)
 	}
 
+	if mustCallReassignObjectsProc {
+		logger.DebugContext(ctx, "Running procedure to reassign database objects.", "orphaned_resource_owner", orphanedResourceOwner)
+		err := withRetry(ctx, logger, func() error {
+			reassignObjectsQuery, err := buildCallQuery(sessionCtx, reassignObjectsProcName)
+			if err != nil {
+				return trace.Wrap(err)
+			}
+			_, err = conn.Exec(
+				ctx,
+				reassignObjectsQuery,
+				sessionCtx.DatabaseUser,
+				orphanedResourceOwner,
+			)
+			return trace.Wrap(err)
+		})
+		if err != nil {
+			logger.WarnContext(ctx, "Failed to reassign database objects.", "error", err)
+		} else {
+			logger.DebugContext(ctx, "Successfully reassigned database objects.")
+		}
+	}
+
 	var state string
+	logger.DebugContext(ctx, "Running procedure to delete/deactivate user.")
 	err = withRetry(ctx, logger, func() error {
 		switch {
 		case sessionCtx.Database.IsRedshift():
@@ -378,13 +410,7 @@ func (e *Engine) DeleteUser(ctx context.Context, sessionCtx *common.Session) err
 			if err != nil {
 				return trace.Wrap(err)
 			}
-			row := conn.QueryRow(
-				ctx,
-				deleteQuery,
-				sessionCtx.DatabaseUser,
-				sessionCtx.Database.GetAdminUser().Name,
-				sessionCtx.Database.GetOrphanedResourceOwner(),
-			)
+			row := conn.QueryRow(ctx, deleteQuery, sessionCtx.DatabaseUser)
 			return trace.Wrap(row.Scan(&state))
 		}
 	})
@@ -414,11 +440,7 @@ func (e *Engine) DeleteUser(ctx context.Context, sessionCtx *common.Session) err
 // into the returned error instead of doing this on state returned (like regular
 // PostgreSQL).
 func (e *Engine) deleteUserRedshift(ctx context.Context, sessionCtx *common.Session, conn *pgx.Conn, state *string) error {
-	err := e.callProcedure(ctx, sessionCtx, conn, deleteProcName,
-		sessionCtx.DatabaseUser,
-		sessionCtx.Database.GetAdminUser().Name,
-		sessionCtx.Database.GetOrphanedResourceOwner(),
-	)
+	err := e.callProcedure(ctx, sessionCtx, conn, deleteProcName, sessionCtx.DatabaseUser)
 	if err == nil {
 		*state = common.SQLStateUserDropped
 		return nil
@@ -604,6 +626,9 @@ const (
 	// removePermissionsProcName is the name of the stored procedure Teleport will use
 	// to automatically remove all database permissions.
 	removePermissionsProcName = "teleport_remove_permissions"
+	// reassignObjectsProcName is the name of the stored procedure Teleport will use
+	// to automatically reassign ownership of database objects.
+	reassignObjectsProcName = "teleport_reassign_objects"
 	// teleportAutoUserRole is the name of a PostgreSQL role that all Teleport
 	// managed users will be a part of.
 	teleportAutoUserRole = "teleport-auto-user"
@@ -626,7 +651,13 @@ var (
 	deleteProc string
 	// deleteProcCall contains the procedure name and arguments used to call
 	// the delete user procedure.
-	deleteProcCall = fmt.Sprintf(`%v($1, $2, $3)`, deleteProcName)
+	deleteProcCall = fmt.Sprintf(`%v($1)`, deleteProcName)
+
+	//go:embed sql/reassign-objects.sql
+	reassignObjectsProc string
+	// reassignObjectsProcCall contains the procedure name and arguments used to call
+	// the reassign objects procedure.
+	reassignObjectsProcCall = fmt.Sprintf(`%v($1, $2)`, reassignObjectsProcName)
 
 	//go:embed sql/redshift-activate-user.sql
 	redshiftActivateProc string
@@ -653,6 +684,7 @@ var (
 		deleteProcName:            deleteProc,
 		updatePermissionsProcName: updatePermissionsProc,
 		removePermissionsProcName: removePermissionsProc,
+		reassignObjectsProcName:   reassignObjectsProc,
 	}
 
 	redshiftProcs = map[string]string{
@@ -668,6 +700,7 @@ var (
 		deleteProcName:            deleteProcCall,
 		updatePermissionsProcName: updatePermissionsProcCall,
 		removePermissionsProcName: removePermissionsProcCall,
+		reassignObjectsProcName:   reassignObjectsProcCall,
 	}
 )
 

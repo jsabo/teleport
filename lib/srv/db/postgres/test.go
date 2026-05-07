@@ -93,6 +93,8 @@ type TestServer struct {
 	userEventsCh chan UserEvent
 	// userPermissionEventsCh receives user permission change events.
 	userPermissionEventsCh chan UserPermissionEvent
+	// reassignObjectsEventsCh receives object reassignment events.
+	reassignObjectsEventsCh chan ReassignObjectsEvent
 	// mu protects test server's shared state.
 	mu sync.Mutex
 	// allowedUsers list of users that can be used to connect to the server.
@@ -138,6 +140,14 @@ type UserPermissionEvent struct {
 	Permissions Permissions
 }
 
+// ReassignObjectsEvent represents an object reassignment event.
+type ReassignObjectsEvent struct {
+	// Username is the user whose objects are being reassigned.
+	Username string
+	// OrphanedResourceOwner is the user to which objects are reassigned.
+	OrphanedResourceOwner string
+}
+
 // storedProcedure represents a stored procedure.
 type storedProcedure struct {
 	query     string
@@ -175,13 +185,14 @@ func NewTestServer(config common.TestServerConfig) (svr *TestServer, err error) 
 			teleport.ComponentKey, defaults.ProtocolPostgres,
 			"name", config.Name,
 		),
-		parametersCh:           make(chan map[string]string, 100),
-		pids:                   make(map[uint32]*pidHandle),
-		storedProcedures:       make(map[string]*storedProcedure),
-		userEventsCh:           make(chan UserEvent, 100),
-		userPermissionEventsCh: make(chan UserPermissionEvent, 100),
-		allowedUsers:           &allowedUsers,
-		mmCache:                make(map[string]*multiMessage),
+		parametersCh:            make(chan map[string]string, 100),
+		pids:                    make(map[uint32]*pidHandle),
+		storedProcedures:        make(map[string]*storedProcedure),
+		userEventsCh:            make(chan UserEvent, 100),
+		userPermissionEventsCh:  make(chan UserPermissionEvent, 100),
+		reassignObjectsEventsCh: make(chan ReassignObjectsEvent, 100),
+		allowedUsers:            &allowedUsers,
+		mmCache:                 make(map[string]*multiMessage),
 	}, nil
 }
 
@@ -326,6 +337,10 @@ func (s *TestServer) handleStartup(client *pgproto3.Backend, startupMessage *pgp
 				case updatePermissionsProcName:
 					if err := s.handleUpdatePermissions(client); err != nil {
 						s.log.ErrorContext(context.Background(), "Failed to handle user permissions update.", "error", err)
+					}
+				case reassignObjectsProcName:
+					if err := s.handleReassignObjects(client); err != nil {
+						s.log.ErrorContext(context.Background(), "Failed to handle object reassignment.", "error", err)
 					}
 				}
 
@@ -647,14 +662,10 @@ func (s *TestServer) handleDeactivateUser(client *pgproto3.Backend, sendDeleteRe
 	if err != nil {
 		return trace.Wrap(err)
 	}
-	parameterOIDs := []uint32{pgtype.VarcharOID}
-	if sendDeleteResponse {
-		parameterOIDs = []uint32{pgtype.VarcharOID, pgtype.VarcharOID, pgtype.VarcharOID}
-	}
 	// Respond to Parse message.
 	err = s.sendMessages(client,
 		&pgproto3.ParseComplete{},
-		&pgproto3.ParameterDescription{ParameterOIDs: parameterOIDs},
+		&pgproto3.ParameterDescription{ParameterOIDs: []uint32{pgtype.VarcharOID}},
 		&pgproto3.NoData{},
 		&pgproto3.ReadyForQuery{})
 	if err != nil {
@@ -669,22 +680,6 @@ func (s *TestServer) handleDeactivateUser(client *pgproto3.Backend, sendDeleteRe
 	name, err := getVarchar(bind.ParameterFormatCodes[0], bind.Parameters[0])
 	if err != nil {
 		return trace.Wrap(err)
-	}
-	// Extract admin_user for delete operations.
-	admin_user := ""
-	if sendDeleteResponse {
-		admin_user, err = getVarchar(bind.ParameterFormatCodes[1], bind.Parameters[1])
-		if err != nil {
-			return trace.Wrap(err)
-		}
-	}
-	// Extract orphaned_resource_owner for delete operations.
-	orphaned_resource_owner := ""
-	if sendDeleteResponse {
-		orphaned_resource_owner, err = getVarchar(bind.ParameterFormatCodes[2], bind.Parameters[2])
-		if err != nil {
-			return trace.Wrap(err)
-		}
 	}
 	// Expect Execute message.
 	_, err = s.receiveExecuteMessage(client)
@@ -719,7 +714,7 @@ func (s *TestServer) handleDeactivateUser(client *pgproto3.Backend, sendDeleteRe
 	}
 	// Mark the user as active.
 	if sendDeleteResponse {
-		s.log.DebugContext(context.Background(), "Deactivated user.", "user", name, "admin_user", admin_user, "orphaned_resource_owner", orphaned_resource_owner)
+		s.log.DebugContext(context.Background(), "Deleted user.", "user", name)
 	} else {
 		s.log.DebugContext(context.Background(), "Deactivated user.", "user", name)
 	}
@@ -853,6 +848,68 @@ func (s *TestServer) handleSchemaInfo(client *pgproto3.Backend) error {
 		&pgproto3.ReadyForQuery{})
 	if err != nil {
 		return trace.Wrap(err)
+	}
+	return nil
+}
+
+func (s *TestServer) handleReassignObjects(client *pgproto3.Backend) error {
+	// Expect Describe message.
+	_, err := s.receiveDescribeMessage(client)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	// Expect Sync message.
+	_, err = s.receiveSyncMessage(client)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	// Respond to Parse message.
+	err = s.sendMessages(client,
+		&pgproto3.ParseComplete{},
+		&pgproto3.ParameterDescription{ParameterOIDs: []uint32{pgtype.VarcharOID, pgtype.VarcharOID}},
+		&pgproto3.NoData{},
+		&pgproto3.ReadyForQuery{})
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	// Expect Bind message.
+	bind, err := s.receiveBindMessage(client)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	// Extract user name.
+	name, err := getVarchar(bind.ParameterFormatCodes[0], bind.Parameters[0])
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	// Extract orphaned_resource_owner.
+	orphaned_resource_owner, err := getVarchar(bind.ParameterFormatCodes[1], bind.Parameters[1])
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	// Expect Execute message.
+	_, err = s.receiveExecuteMessage(client)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	// Expect Sync message.
+	_, err = s.receiveSyncMessage(client)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	// Respond to Bind message.
+	err = s.sendMessages(client,
+		&pgproto3.BindComplete{},
+		&pgproto3.NoData{},
+		&pgproto3.CommandComplete{},
+		&pgproto3.ReadyForQuery{})
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	s.log.DebugContext(context.Background(), "Reassigned database objects.", "user", name, "orphaned_resource_owner", orphaned_resource_owner)
+	s.reassignObjectsEventsCh <- ReassignObjectsEvent{
+		Username:              name,
+		OrphanedResourceOwner: orphaned_resource_owner,
 	}
 	return nil
 }
@@ -1010,6 +1067,11 @@ func (s *TestServer) UserEventsCh() <-chan UserEvent {
 // UserPermissionsCh returns channel that receives user permission events.
 func (s *TestServer) UserPermissionsCh() <-chan UserPermissionEvent {
 	return s.userPermissionEventsCh
+}
+
+// ReassignObjectsEventsCh returns channel that receives object reassignment events.
+func (s *TestServer) ReassignObjectsEventsCh() <-chan ReassignObjectsEvent {
+	return s.reassignObjectsEventsCh
 }
 
 // Close closes the server listener.
