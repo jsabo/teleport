@@ -374,29 +374,34 @@ func collectIntegrationStats(ctx context.Context, req collectIntegrationStatsReq
 			return nil, trace.Wrap(err)
 		}
 
-		discoveredResources, ok := cfg.Status.IntegrationDiscoveredResources[req.integration.GetName()]
-		if !ok {
+		summaries := integrationSummariesForConfig(cfg, req.integration.GetName())
+		if len(summaries) == 0 {
 			continue
 		}
 
-		if matchers := rulesWithIntegration(cfg, types.AWSMatcherEC2, req.integration.GetName()); matchers != 0 {
-			ret.AWSEC2.RulesCount += matchers
-			mergeResourceTypeSummary(&ret.AWSEC2, cfg.Status.LastSyncTime, discoveredResources.AwsEc2)
-		}
+		ec2Matchers := rulesWithIntegration(cfg, types.AWSMatcherEC2, req.integration.GetName())
+		rdsMatchers := rulesWithIntegration(cfg, types.AWSMatcherRDS, req.integration.GetName())
+		eksMatchers := rulesWithIntegration(cfg, types.AWSMatcherEKS, req.integration.GetName())
+		azureVMMatchers := rulesWithIntegration(cfg, types.AzureMatcherVM, req.integration.GetName())
 
-		if matchers := rulesWithIntegration(cfg, types.AWSMatcherRDS, req.integration.GetName()); matchers != 0 {
-			ret.AWSRDS.RulesCount += matchers
-			mergeResourceTypeSummary(&ret.AWSRDS, cfg.Status.LastSyncTime, discoveredResources.AwsRds)
-		}
+		ret.AWSEC2.RulesCount += ec2Matchers
+		ret.AWSRDS.RulesCount += rdsMatchers
+		ret.AWSEKS.RulesCount += eksMatchers
+		ret.AzureVM.RulesCount += azureVMMatchers
 
-		if matchers := rulesWithIntegration(cfg, types.AWSMatcherEKS, req.integration.GetName()); matchers != 0 {
-			ret.AWSEKS.RulesCount += matchers
-			mergeResourceTypeSummary(&ret.AWSEKS, cfg.Status.LastSyncTime, discoveredResources.AwsEks)
-		}
-
-		if matchers := rulesWithIntegration(cfg, types.AzureMatcherVM, req.integration.GetName()); matchers != 0 {
-			ret.AzureVM.RulesCount += matchers
-			mergeResourceTypeSummary(&ret.AzureVM, cfg.Status.LastSyncTime, discoveredResources.AzureVms)
+		for _, s := range summaries {
+			if ec2Matchers != 0 {
+				mergeResourceTypeSummary(&ret.AWSEC2, s.summary.GetAwsEc2(), s.pollInterval)
+			}
+			if rdsMatchers != 0 {
+				mergeResourceTypeSummary(&ret.AWSRDS, s.summary.GetAwsRds(), s.pollInterval)
+			}
+			if eksMatchers != 0 {
+				mergeResourceTypeSummary(&ret.AWSEKS, s.summary.GetAwsEks(), s.pollInterval)
+			}
+			if azureVMMatchers != 0 {
+				mergeResourceTypeSummary(&ret.AzureVM, s.summary.GetAzureVms(), s.pollInterval)
+			}
 		}
 	}
 
@@ -533,18 +538,66 @@ func countAWSOIDCDeployedDatabaseServices(ctx context.Context, req collectIntegr
 	return len(services), nil
 }
 
-func mergeResourceTypeSummary(in *ui.ResourceTypeSummary, lastSyncTime time.Time, new *discoveryconfigv1.ResourcesDiscoveredSummary) {
-	if new == nil {
+type integrationSummaryWithPollInterval struct {
+	summary      *discoveryconfigv1.DiscoverSummary
+	pollInterval time.Duration
+}
+
+func integrationSummariesForConfig(cfg *discoveryconfig.DiscoveryConfig, integrationName string) []integrationSummaryWithPollInterval {
+	var summaries []integrationSummaryWithPollInterval
+	for _, serverStatus := range cfg.Status.ServerStatus {
+		if serverStatus == nil || serverStatus.DiscoveryStatusServer == nil {
+			continue
+		}
+		discoverSummary, ok := serverStatus.GetIntegrationSummaries()[integrationName]
+		if !ok {
+			continue
+		}
+		summaries = append(summaries, integrationSummaryWithPollInterval{
+			summary:      discoverSummary,
+			pollInterval: serverStatus.GetPollInterval().AsDuration(),
+		})
+	}
+	return summaries
+}
+
+func mergeResourceTypeSummary(in *ui.ResourceTypeSummary, resourceSummary *discoveryconfigv1.ResourceSummary, pollInterval time.Duration) {
+	if resourceSummary == nil {
 		return
 	}
 
-	in.DiscoverLastSync = lastSync(in.DiscoverLastSync, lastSyncTime)
-	in.ResourcesFound += int(new.Found)
-	in.ResourcesEnrollmentSuccess += int(new.Enrolled)
-	in.ResourcesEnrollmentFailed += int(new.Failed)
+	previous := resourceSummary.GetPrevious()
+	if previous != nil {
+		in.ResourcesFound += int(previous.GetFound())
+		in.ResourcesEnrollmentSuccess += int(previous.GetEnrolled())
+		in.ResourcesEnrollmentFailed += int(previous.GetFailed())
+
+		in.DiscoverLastSync = latestTime(in.DiscoverLastSync, previous.GetSyncEnd().AsTime())
+	}
+
+	current := resourceSummary.GetCurrent()
+	if current != nil {
+		in.SyncStart = latestTime(in.SyncStart, current.GetSyncStart().AsTime())
+		if current.GetSyncEnd().AsTime().IsZero() {
+			in.SyncEnd = nil
+		} else {
+			in.SyncEnd = latestTime(in.SyncEnd, current.GetSyncEnd().AsTime())
+		}
+	} else if previous != nil {
+		in.SyncStart = latestTime(in.SyncStart, previous.GetSyncStart().AsTime())
+		in.SyncEnd = latestTime(in.SyncEnd, previous.GetSyncEnd().AsTime())
+	}
+
+	if pollInterval > 0 && in.PollIntervalSeconds == 0 {
+		in.PollIntervalSeconds = int(pollInterval.Seconds())
+	}
 }
 
-func lastSync(current *time.Time, new time.Time) *time.Time {
+func latestTime(current *time.Time, new time.Time) *time.Time {
+	if new.IsZero() {
+		return current
+	}
+
 	if current == nil {
 		return &new
 	}
