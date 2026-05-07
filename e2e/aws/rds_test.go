@@ -166,7 +166,7 @@ func testRDS(t *testing.T) {
 		}, db2OrphanedResourceOwner)
 		require.NoError(t, cluster.Process.GetAuthServer().CreateDatabase(ctx, db2WithOrphanedResourceOwner))
 
-		// wait for databases to be auto-discovered, and get their populated versions
+		// wait for database clones to heartbeat, and get their populated versions
 		waitForDatabases(t, cluster.Process,
 			db1.GetName(), db1WithOrphanedResourceOwner.GetName(),
 			db2.GetName(), db2WithOrphanedResourceOwner.GetName(),
@@ -205,12 +205,6 @@ func testRDS(t *testing.T) {
 		createPGTestTable(t, ctx, conn, testSchema, testTable)
 		createPGTestTable(t, ctx, conn, "public", testTable)
 
-		// create table name for testing reassignment under db1 and db2, respectively
-		tableForReassignment1 := "table_for_reassignment1_" + randASCII(t)
-		cleanupDB(t, ctx, conn, fmt.Sprintf("DROP TABLE IF EXISTS public.%q", tableForReassignment1))
-		tableForReassignment2 := "table_for_reassignment2_" + randASCII(t)
-		cleanupDB(t, ctx, conn, fmt.Sprintf("DROP TABLE IF EXISTS public.%q", tableForReassignment2))
-
 		// provision db1 admin that is not a postgres superuser
 		createPGTestUser(t, ctx, conn, db1.GetAdminUser().Name)
 		pgMustExec(t, ctx, conn, fmt.Sprintf("ALTER USER %q WITH CREATEROLE", db1.GetAdminUser().Name))
@@ -230,7 +224,7 @@ func testRDS(t *testing.T) {
 		// granting rds_superuser is as close as we can get to a superuser in RDS Postgres
 		pgMustExec(t, ctx, conn, fmt.Sprintf("GRANT rds_iam, rds_superuser TO %q", db2.GetAdminUser().Name))
 
-		// provision db1 orphaned_resource_owner user
+		// provision db2 orphaned_resource_owner user
 		createPGTestUser(t, ctx, conn, db2WithOrphanedResourceOwner.GetOrphanedResourceOwner())
 		// admin must be a member of orphaned_resource_owner to reassign ownership of resources to it.
 		// We do this because the rds_superuser role under RDS postgres provides lesser privileges than
@@ -322,8 +316,8 @@ func testRDS(t *testing.T) {
 							query := fmt.Sprintf("CREATE TABLE %q.%q (id INT)", testSchema, tableForReassignment)
 							cleanupDB(t, ctx, conn, fmt.Sprintf("DROP TABLE IF EXISTS %q.%q", testSchema, tableForReassignment))
 							execPGTestQuery(t, pgConn, query)
-							waitForPostgresAutoUserDrop(t, ctx, conn, autoUserDrop)
-							waitForPostgresTableReassignment(t, ctx, conn,
+							waitForPostgresAutoUserDrop(t, ctx, conn, autoUserDropWithReassignment)
+							checkPostgresTableReassignment(t, ctx, conn,
 								testSchema,
 								test.dbWithOrphanedResourceOwner.GetOrphanedResourceOwner(),
 								tableForReassignment,
@@ -852,7 +846,7 @@ func waitForPostgresAutoUserDrop(t *testing.T, ctx context.Context, conn *pgConn
 	}, autoUserWaitDur, autoUserWaitStep, "waiting for auto user %q to be dropped", user)
 }
 
-func waitForPostgresTableReassignment(
+func checkPostgresTableReassignment(
 	t *testing.T,
 	ctx context.Context,
 	conn *pgConn,
@@ -861,34 +855,20 @@ func waitForPostgresTableReassignment(
 	testTable string,
 ) {
 	t.Helper()
-
-	waitForSuccess(t, func() error {
-		rows, _ := conn.Query(ctx, `
+	rows, err := conn.Query(ctx, `
 			SELECT tableowner
 			FROM pg_tables
 			WHERE schemaname = $1 AND tablename = $2`,
-			schemaName, testTable)
-
-		var owner string
-		if rows.Next() {
-			if err := rows.Scan(&owner); err != nil {
-				rows.Close()
-				return trace.Wrap(err)
-			}
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return trace.Wrap(err)
-		}
-
-		if owner != orphanedResourceOwner {
-			return trace.Errorf("table %q should be owned by %q, but is owned by %q",
-				testTable, orphanedResourceOwner, owner)
-		}
-
-		return nil
-	}, autoUserWaitDur, autoUserWaitStep,
-		"waiting for table %q to be reassigned to %q", testTable, orphanedResourceOwner)
+		schemaName, testTable)
+	require.NoError(t, err)
+	var owner string
+	if rows.Next() {
+		err := rows.Scan(&owner)
+		require.NoError(t, err)
+	}
+	rows.Close()
+	require.NoError(t, rows.Err())
+	require.Equal(t, orphanedResourceOwner, owner)
 }
 
 func waitForMySQLAutoUserDeactivate(t *testing.T, conn *mySQLConn, user string) {
