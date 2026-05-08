@@ -228,10 +228,11 @@ func TestNoFollowFileOperations(t *testing.T) {
 		linkTarget := filepath.Join(link, "foo.txt")
 
 		_, err := openFileNoFollow(linkTarget, os.O_WRONLY|os.O_CREATE, 0o644)
-		require.ErrorIs(t, err, syscall.ENOTDIR)
+		require.ErrorIs(t, err, syscall.ELOOP)
 		err = setstatNoFollow(linkTarget, sftp.FileAttrFlags{Permissions: true}, &sftp.FileStat{Mode: 0o600})
-		require.ErrorIs(t, err, syscall.ENOTDIR)
+		require.ErrorIs(t, err, syscall.ELOOP)
 	})
+
 	t.Run("block symlink at end of path", func(t *testing.T) {
 		tempDir := newTempDir(t)
 		targetFile := filepath.Join(tempDir, "foo.txt")

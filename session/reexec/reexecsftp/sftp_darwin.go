@@ -22,4 +22,5 @@ package reexecsftp
 
 import "golang.org/x/sys/unix"
 
-const noFollowDirFlags = unix.O_DIRECTORY | unix.O_RDONLY
+// readOnlyPath holds platform-specific flags for opening a directory for openat().
+const readOnlyPath = unix.O_RDONLY

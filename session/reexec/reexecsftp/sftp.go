@@ -402,7 +402,9 @@ func openFD(fd uintptr, name string) (*os.File, error) {
 	return file, nil
 }
 
-// openAtAndClose opens a file under the parent directory, then closes the parent directory file.
+// openAtAndClose opens a file under the parent directory without following
+// symlinks, then closes the parent file. The parent file will be
+// closed even if this function returns an error.
 func openAtAndClose(parent *os.File, name string, flags int, mode os.FileMode) (*os.File, error) {
 	defer parent.Close()
 	syscallConn, err := parent.SyscallConn()
@@ -437,18 +439,20 @@ func openFileNoFollow(file string, flags int, mode os.FileMode) (*os.File, error
 	if err != nil {
 		return nil, err
 	}
-	pathParts := strings.Split(relDir, string(os.PathSeparator))
-	parent, err := os.OpenFile(string(os.PathSeparator), noFollowDirFlags, 0)
+	parent, err := os.OpenFile(string(os.PathSeparator), readOnlyPath, 0)
 	if err != nil {
 		return nil, err
 	}
 	// Open each directory one at a time to ensure no symlinks are followed.
-	for _, part := range pathParts {
-		parent, err = openAtAndClose(parent, part, noFollowDirFlags, 0)
+	for relDir != "" {
+		var part string
+		part, relDir, _ = strings.Cut(relDir, string(os.PathSeparator))
+		parent, err = openAtAndClose(parent, part, unix.O_DIRECTORY|readOnlyPath, 0)
 		if err != nil {
 			return nil, err
 		}
 	}
+	// Set nonblock so we don't hang in case file is a pipe.
 	f, err := openAtAndClose(parent, filename, flags|unix.O_NONBLOCK, mode)
 	if err != nil {
 		return nil, err
@@ -465,8 +469,8 @@ func chtimes(file *os.File, atime, mtime time.Time) error {
 	ctrlErr := syscallConn.Control(func(fd uintptr) {
 		for {
 			modifyErr = unix.Futimes(int(fd), []unix.Timeval{
-				{Sec: atime.Unix()},
-				{Sec: mtime.Unix()},
+				unix.NsecToTimeval(atime.UnixNano()),
+				unix.NsecToTimeval(mtime.UnixNano()),
 			})
 			if !errors.Is(modifyErr, syscall.EINTR) {
 				return
