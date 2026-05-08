@@ -1308,6 +1308,9 @@ type Cache interface {
 	// GetDatabaseServers returns all registered database proxy servers.
 	GetDatabaseServers(ctx context.Context, namespace string, opts ...services.MarshalOption) ([]types.DatabaseServer, error)
 
+	// GetDatabaseServersByDatabaseName returns an iterator over database proxy servers for a given database name.
+	GetDatabaseServersByDatabaseName(ctx context.Context, databaseName string) iter.Seq2[types.DatabaseServer, error]
+
 	// GetDatabases returns all database resources.
 	// Deprecated: Prefer paginated variant such as [ListDatabases] or [RangeDatabases]
 	GetDatabases(ctx context.Context) ([]types.Database, error)

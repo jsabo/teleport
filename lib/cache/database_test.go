@@ -18,15 +18,22 @@ package cache
 
 import (
 	"context"
+	"strconv"
 	"testing"
+	"testing/synctest"
 
 	"github.com/google/uuid"
 	"github.com/gravitational/trace"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	apidefaults "github.com/gravitational/teleport/api/defaults"
 	dbobjectv1 "github.com/gravitational/teleport/api/gen/proto/go/teleport/dbobject/v1"
 	"github.com/gravitational/teleport/api/types"
+	"github.com/gravitational/teleport/lib/backend/memory"
 	"github.com/gravitational/teleport/lib/defaults"
+	"github.com/gravitational/teleport/lib/itertools/stream"
+	"github.com/gravitational/teleport/lib/services/local"
 )
 
 // TestDatabaseServices tests that CRUD operations on DatabaseServices are
@@ -221,4 +228,176 @@ func TestDatabaseObjects(t *testing.T) {
 			return nil
 		},
 	})
+}
+
+func mustCreateDatabaseServer(t testing.TB, dbName string) types.DatabaseServer {
+	t.Helper()
+
+	databaseServer, err := types.NewDatabaseServerV3(types.Metadata{
+		Name: dbName,
+	}, types.DatabaseServerSpecV3{
+		HostID:   uuid.New().String(),
+		Hostname: "localhost",
+		Database: mustCreateDatabase(t, dbName, defaults.ProtocolPostgres, "localhost"),
+	})
+	require.NoError(t, err)
+	return databaseServer
+}
+
+func TestGetDatabaseServersByDatabaseName(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx := t.Context()
+
+		bk, err := memory.New(memory.Config{Context: ctx, Mirror: true})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = bk.Close() })
+
+		presenceS := local.NewPresenceService(bk)
+		eventsS := local.NewEventsService(bk)
+		c, err := New(Config{
+			Context:  ctx,
+			Presence: presenceS,
+			Events:   eventsS,
+			Watches:  []types.WatchKind{{Kind: types.KindDatabaseServer}},
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() { c.Close() })
+
+		// parameter validation
+		_, err = stream.Collect(c.GetDatabaseServersByDatabaseName(ctx, ""))
+		require.ErrorAs(t, err, new(*trace.BadParameterError))
+
+		server1 := mustCreateDatabaseServer(t, "shared-db")
+		server2 := mustCreateDatabaseServer(t, "shared-db")
+		server3 := mustCreateDatabaseServer(t, "other-db")
+
+		for _, server := range []types.DatabaseServer{server1, server2, server3} {
+			_, err := presenceS.UpsertDatabaseServer(ctx, server)
+			require.NoError(t, err)
+		}
+		synctest.Wait()
+
+		// two servers should be returned for "shared-db"
+		out, err := stream.Collect(c.GetDatabaseServersByDatabaseName(ctx, "shared-db"))
+		if assert.NoError(t, err) && assert.Len(t, out, 2) {
+			var hostIDs []string
+			for _, server := range out {
+				hostIDs = append(hostIDs, server.GetHostID())
+				assert.Equal(t, "shared-db", server.GetDatabase().GetName())
+			}
+			assert.Contains(t, hostIDs, server1.GetHostID())
+			assert.Contains(t, hostIDs, server2.GetHostID())
+		}
+
+		// one server should be returned for "other-db"
+		out, err = stream.Collect(c.GetDatabaseServersByDatabaseName(ctx, "other-db"))
+		if assert.NoError(t, err) && assert.Len(t, out, 1) {
+			assert.Equal(t, "other-db", out[0].GetDatabase().GetName())
+		}
+
+		// no servers should be returned for a non-existent database
+		out, err = stream.Collect(c.GetDatabaseServersByDatabaseName(ctx, "non-existent-db"))
+		assert.NoError(t, err)
+		assert.Empty(t, out)
+
+		// test that deleted servers are not returned
+		err = presenceS.DeleteDatabaseServer(ctx, server1.GetNamespace(), server1.GetHostID(), server1.GetName())
+		require.NoError(t, err)
+		synctest.Wait()
+
+		out, err = stream.Collect(c.GetDatabaseServersByDatabaseName(ctx, "shared-db"))
+		require.NoError(t, err)
+		require.Len(t, out, 1)
+		require.NotEqual(t, server1.GetHostID(), out[0].GetHostID())
+		require.Equal(t, server2.GetHostID(), out[0].GetHostID())
+		require.Equal(t, "shared-db", out[0].GetDatabase().GetName())
+	})
+}
+
+func TestGetDatabaseServersByDatabaseNameFallback(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+
+	p := newTestPack(t, func(cfg Config) Config {
+		cfg.neverOK = true // force the cache into a permanently unhealthy state
+		return ForProxy(cfg)
+	})
+	t.Cleanup(p.Close)
+
+	server1 := mustCreateDatabaseServer(t, "shared-db")
+	server2 := mustCreateDatabaseServer(t, "shared-db")
+	server3 := mustCreateDatabaseServer(t, "other-db")
+
+	for _, server := range []types.DatabaseServer{server1, server2, server3} {
+		_, err := p.presenceS.UpsertDatabaseServer(ctx, server)
+		require.NoError(t, err)
+	}
+
+	t.Run("ReturnsMultipleServersForDatabase", func(t *testing.T) {
+		out, err := stream.Collect(p.cache.GetDatabaseServersByDatabaseName(ctx, "shared-db"))
+		require.NoError(t, err)
+		require.Len(t, out, 2)
+		var hostIDs []string
+		for _, s := range out {
+			hostIDs = append(hostIDs, s.GetHostID())
+			require.Equal(t, "shared-db", s.GetDatabase().GetName())
+		}
+		require.Contains(t, hostIDs, server1.GetHostID())
+		require.Contains(t, hostIDs, server2.GetHostID())
+	})
+
+	t.Run("ReturnsSingleServerForDatabase", func(t *testing.T) {
+		out, err := stream.Collect(p.cache.GetDatabaseServersByDatabaseName(ctx, "other-db"))
+		require.NoError(t, err)
+		require.Len(t, out, 1)
+		require.Equal(t, "other-db", out[0].GetDatabase().GetName())
+	})
+
+	t.Run("ReturnsEmptyForNonExistentDatabase", func(t *testing.T) {
+		out, err := stream.Collect(p.cache.GetDatabaseServersByDatabaseName(ctx, "non-existent-db"))
+		require.NoError(t, err)
+		require.Empty(t, out)
+	})
+}
+
+func BenchmarkGetDatabaseServersByDatabaseName(b *testing.B) {
+	if testing.Short() {
+		b.Skip("skipping benchmark in short mode")
+	}
+
+	ctx := b.Context()
+	b.ReportAllocs()
+
+	numServers := 1000
+
+	bk, err := memory.New(memory.Config{Context: ctx, Mirror: true})
+	require.NoError(b, err)
+	b.Cleanup(func() { _ = bk.Close() })
+
+	// Populate the backend before starting the cache so the bulk fetch on init
+	// covers everything. New() will block until the cache is ready.
+	presenceS := local.NewPresenceService(bk)
+	for i := range numServers {
+		server := mustCreateDatabaseServer(b, "db-"+strconv.Itoa(i))
+		_, err := presenceS.UpsertDatabaseServer(ctx, server)
+		require.NoError(b, err)
+	}
+
+	c, err := New(Config{
+		Context:  ctx,
+		Presence: presenceS,
+		Events:   local.NewEventsService(bk),
+		Watches:  []types.WatchKind{{Kind: types.KindDatabaseServer}},
+	})
+	require.NoError(b, err)
+	b.Cleanup(func() { c.Close() })
+
+	b.ResetTimer()
+
+	for b.Loop() {
+		servers, err := stream.Collect(c.GetDatabaseServersByDatabaseName(ctx, "db-0"))
+		require.NoError(b, err)
+		require.Len(b, servers, 1)
+	}
 }

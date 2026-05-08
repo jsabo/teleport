@@ -22,6 +22,7 @@ import (
 
 	"github.com/gravitational/trace"
 	"google.golang.org/protobuf/proto"
+	"rsc.io/ordered"
 
 	"github.com/gravitational/teleport/api/client"
 	clientproto "github.com/gravitational/teleport/api/client/proto"
@@ -166,6 +167,15 @@ func (c *Cache) RangeDatabases(ctx context.Context, start, end string) iter.Seq2
 type databaseServerIndex string
 
 const databaseServerNameIndex databaseServerIndex = "name"
+const databaseServerDatabaseNameIndex databaseServerIndex = "database_name"
+
+func databaseServerByDatabaseNameKey(s types.DatabaseServer) string {
+	db := s.GetDatabase()
+	if db == nil {
+		return ""
+	}
+	return string(ordered.Encode(db.GetName(), s.GetHostID(), s.GetName()))
+}
 
 func newDatabaseServerCollection(p services.Presence, w types.WatchKind) (*collection[types.DatabaseServer, databaseServerIndex], error) {
 	if p == nil {
@@ -180,6 +190,7 @@ func newDatabaseServerCollection(p services.Presence, w types.WatchKind) (*colle
 				databaseServerNameIndex: func(u types.DatabaseServer) string {
 					return u.GetHostID() + "/" + u.GetName()
 				},
+				databaseServerDatabaseNameIndex: databaseServerByDatabaseNameKey,
 			}),
 		fetcher: func(ctx context.Context, loadSecrets bool) ([]types.DatabaseServer, error) {
 			return p.GetDatabaseServers(ctx, defaults.Namespace)
@@ -222,6 +233,65 @@ func (c *Cache) GetDatabaseServers(ctx context.Context, namespace string, opts .
 	}
 
 	return out, nil
+}
+
+// GetDatabaseServersByDatabaseName returns an iterator over database proxy servers for a given database name.
+func (c *Cache) GetDatabaseServersByDatabaseName(ctx context.Context, databaseName string) iter.Seq2[types.DatabaseServer, error] {
+	return func(yield func(types.DatabaseServer, error) bool) {
+		ctx, span := c.Tracer.Start(ctx, "cache/GetDatabaseServersByDatabaseName")
+		defer span.End()
+
+		if databaseName == "" {
+			yield(nil, trace.BadParameter("missing database name"))
+			return
+		}
+
+		rg, err := acquireReadGuard(c, c.collections.dbServers)
+		if err != nil {
+			yield(nil, trace.Wrap(err))
+			return
+		}
+		defer rg.Release()
+
+		if !rg.ReadCache() {
+			var pageToken string
+			for {
+				resp, err := c.Config.Presence.ListResources(ctx, clientproto.ListResourcesRequest{
+					ResourceType: types.KindDatabaseServer,
+					Namespace:    defaults.Namespace,
+					Limit:        defaults.DefaultChunkSize,
+					StartKey:     pageToken,
+				})
+				if err != nil {
+					yield(nil, trace.Wrap(err))
+					return
+				}
+				for _, r := range resp.Resources {
+					server, ok := r.(types.DatabaseServer)
+					if !ok {
+						continue
+					}
+					if server.GetDatabase().GetName() == databaseName {
+						if !yield(server, nil) {
+							return
+						}
+					}
+				}
+				if resp.NextKey == "" {
+					return
+				}
+				pageToken = resp.NextKey
+			}
+		}
+
+		start := string(ordered.Encode(databaseName))
+		end := string(ordered.Encode(databaseName, ordered.Inf))
+		for ds := range rg.store.resources(databaseServerDatabaseNameIndex, start, end) {
+			if !yield(ds.Copy(), nil) {
+				return
+			}
+		}
+	}
 }
 
 type databaseServiceIndex string
