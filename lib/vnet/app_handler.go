@@ -110,7 +110,7 @@ func (h *appHandler) getOrInitializeLocalProxy(ctx context.Context, localPort ui
 	h.log.DebugContext(ctx, "Creating local proxy", "target_port", localPort)
 	newLP, err := newLocalProxy(localProxyConfig{
 		dialOptions:              h.cfg.appInfo.GetDialOptions(),
-		protocols:                []alpncommon.Protocol{alpncommon.ProtocolTCP},
+		protocols:                []alpncommon.Protocol{h.protocol},
 		parentContext:            ctx,
 		middleware:               middleware,
 		clock:                    h.cfg.clock,

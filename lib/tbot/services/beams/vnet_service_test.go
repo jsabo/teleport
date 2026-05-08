@@ -30,8 +30,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/gravitational/teleport"
 	proto "github.com/gravitational/teleport/api/client/proto"
@@ -72,7 +73,6 @@ func TestVNetService(t *testing.T) {
 	upstreamNameserver, err := dns.NewServer(
 		staticResult{A: [4]byte(upstreamResolvedIP.To4())},
 		beams.StaticUpstreamNameservers{},
-		logger,
 	)
 	require.NoError(t, err)
 
@@ -154,23 +154,26 @@ func TestVNetService(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create a delegation session for the user.
-	aliceClient := makeUserClient(t, process, rootClient, user.GetName())
-	session, err := aliceClient.DelegationSessionServiceClient().
-		CreateDelegationSession(t.Context(), &delegationv1.CreateDelegationSessionRequest{
-			Spec: &delegationv1.DelegationSessionSpec{
-				User: user.GetName(),
-				Resources: []*delegationv1.DelegationResourceSpec{
-					{Kind: types.Wildcard, Name: types.Wildcard},
-				},
-				AuthorizedUsers: []*delegationv1.DelegationUserSpec{
-					{
-						Kind:    types.KindBot,
-						Matcher: &delegationv1.DelegationUserSpec_BotName{BotName: "test-bot"},
-					},
+	session, err := process.GetAuthServer().CreateDelegationSession(t.Context(), &delegationv1.DelegationSession{
+		Kind:    types.KindDelegationSession,
+		Version: types.V1,
+		Metadata: &headerv1.Metadata{
+			Name:    uuid.NewString(),
+			Expires: timestamppb.New(time.Now().Add(5 * time.Minute)),
+		},
+		Spec: &delegationv1.DelegationSessionSpec{
+			User: user.GetName(),
+			Resources: []*delegationv1.DelegationResourceSpec{
+				{Kind: types.Wildcard, Name: types.Wildcard},
+			},
+			AuthorizedUsers: []*delegationv1.DelegationUserSpec{
+				{
+					Kind:    types.KindBot,
+					Matcher: &delegationv1.DelegationUserSpec_BotName{BotName: "test-bot"},
 				},
 			},
-			Ttl: durationpb.New(5 * time.Minute),
-		})
+		},
+	})
 	require.NoError(t, err)
 
 	// Create a fake host network.
@@ -216,9 +219,11 @@ func TestVNetService(t *testing.T) {
 		t.Fatal("timeout waiting for host network to be configured")
 	}
 
-	// Call the HTTP app over VNet.
-	client := &http.Client{Transport: hostNetwork.HTTPTransport()}
-	rsp, err := client.Get("http://intranet.dunder-mifflin.com")
+	// Call the HTTP app over VNet via the HTTPS tunnel.
+	transport := hostNetwork.HTTPTransport()
+	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	client := &http.Client{Transport: transport}
+	rsp, err := client.Get("https://intranet.dunder-mifflin.com")
 	require.NoError(t, err)
 	defer rsp.Body.Close()
 
