@@ -135,6 +135,7 @@ func (f Features) ToProto() *proto.Features {
 		RecoveryCodes:              f.RecoveryCodes,
 		AccessMonitoringConfigured: f.AccessMonitoringConfigured,
 		Entitlements:               f.EntitlementsToProto(),
+		BeamsUI:                    f.BeamsUI && f.GetEntitlement(entitlements.Beams).Enabled,
 	}
 
 	// remove setLegacyLogic in v18
@@ -172,7 +173,6 @@ func setLegacyLogic(protoF *proto.Features, f Features) {
 	protoF.Policy = &proto.PolicyFeature{
 		Enabled: f.GetEntitlement(entitlements.Policy).Enabled,
 	}
-	protoF.BeamsUI = f.BeamsUI && f.GetEntitlement(entitlements.Beams).Enabled
 }
 
 // EntitlementsToProto takes the features.Entitlements object and returns a proto version. If not present on Features, the
