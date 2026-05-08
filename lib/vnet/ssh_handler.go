@@ -199,6 +199,11 @@ func (h *sshHandler) initiateFallbackSSHConn(ctx context.Context, user string) (
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
+	defer func() {
+		if err != nil {
+			_ = netConn.Close()
+		}
+	}()
 
 	conn, err := h.initiateSSHConnWithMode(
 		ctx,
