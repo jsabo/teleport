@@ -147,12 +147,7 @@ export default function useDesktopSession(
     try {
       await tdpClient.shareDirectory();
       setSharedDirectoriesState(
-        tdpClient.listSharedDirectories().map(entry => {
-          return {
-            name: entry[0],
-            id: entry[1],
-          };
-        })
+        tdpClient.listSharedDirectories()
       );
     } catch (e) {
       if (isAbortError(e)) {
@@ -172,12 +167,7 @@ export default function useDesktopSession(
     try {
       tdpClient.unshareDirectory(directoryId);
       setSharedDirectoriesState(
-        tdpClient.listSharedDirectories().map(entry => {
-          return {
-            name: entry[0],
-            id: entry[1],
-          };
-        })
+        tdpClient.listSharedDirectories()
       );
     } catch (e) {
       if (isAbortError(e)) {
