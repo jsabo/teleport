@@ -124,6 +124,8 @@ type UserACL struct {
 	Contact ResourceAccess `json:"contact"`
 	// FileTransferAccess defines the ability to perform remote file operations via SCP or SFTP
 	FileTransferAccess bool `json:"fileTransferAccess"`
+	// WebTerminalCopyMode defines whether copying from the Web UI terminal is enabled.
+	WebTerminalCopyMode string `json:"webTerminalCopyMode,omitempty"`
 	// GitServers defines access to Git servers.
 	GitServers ResourceAccess `json:"gitServers"`
 	// WorkloadIdentity defines access to Workload Identity
@@ -242,6 +244,7 @@ func NewUserACL(user types.User, userRoles RoleSet, features proto.Features, des
 	userTasksAccess := newAccess(userRoles, ctx, types.KindUserTask)
 	reviewRequests := userRoles.MaybeCanReviewRequests()
 	fileTransferAccess := userRoles.CanCopyFiles()
+	webTerminalCopyMode := webTerminalCopyModeValue(userRoles.GetWebTerminalCopyMode())
 	workloadIdentity := newAccess(userRoles, ctx, types.KindWorkloadIdentity)
 
 	var auditQuery ResourceAccess
@@ -313,6 +316,7 @@ func NewUserACL(user types.User, userRoles RoleSet, features proto.Features, des
 		AccessGraphSettings:     accessGraphSettings,
 		Contact:                 contact,
 		FileTransferAccess:      fileTransferAccess,
+		WebTerminalCopyMode:     webTerminalCopyMode,
 		GitServers:              gitServersAccess,
 		WorkloadIdentity:        workloadIdentity,
 		ClientIPRestriction:     clientIPRestrictions,
@@ -324,5 +328,16 @@ func NewUserACL(user types.User, userRoles RoleSet, features proto.Features, des
 		AutoUpdateAgentRollout:  autoUpdateAgentRollout,
 		AutoUpdateAgentReport:   autoUpdateAgentReport,
 		Beam:                    beam,
+	}
+}
+
+func webTerminalCopyModeValue(mode types.WebTerminalCopyMode) string {
+	switch mode {
+	case types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON:
+		return "on"
+	case types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF:
+		return "off"
+	default:
+		return ""
 	}
 }

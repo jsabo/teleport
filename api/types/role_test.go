@@ -1057,6 +1057,80 @@ func TestUnmarshallCreateDatabaseUserModeYAML(t *testing.T) {
 	}
 }
 
+func TestMarshalWebTerminalCopyModeJSON(t *testing.T) {
+	for _, tc := range []struct {
+		input    WebTerminalCopyMode
+		expected string
+	}{
+		{input: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNSPECIFIED, expected: ""},
+		{input: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON, expected: "on"},
+		{input: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF, expected: "off"},
+	} {
+		got, err := json.Marshal(&tc.input)
+		require.NoError(t, err)
+		require.Equal(t, fmt.Sprintf("%q", tc.expected), string(got))
+	}
+}
+
+func TestMarshalWebTerminalCopyModeYAML(t *testing.T) {
+	for _, tc := range []struct {
+		input    WebTerminalCopyMode
+		expected string
+	}{
+		{input: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNSPECIFIED, expected: `""`},
+		{input: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON, expected: `"on"`},
+		{input: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF, expected: `"off"`},
+	} {
+		got, err := yaml.Marshal(&tc.input)
+		require.NoError(t, err)
+		require.Equal(t, fmt.Sprintf("%s\n", tc.expected), string(got))
+	}
+}
+
+func TestUnmarshalWebTerminalCopyModeJSON(t *testing.T) {
+	for _, tc := range []struct {
+		input    any
+		expected WebTerminalCopyMode
+	}{
+		{input: `""`, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNSPECIFIED},
+		{input: `"on"`, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON},
+		{input: `"off"`, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF},
+		{input: true, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON},
+		{input: false, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF},
+		{input: 0, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNSPECIFIED},
+		{input: 1, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON},
+		{input: 2, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF},
+	} {
+		var got WebTerminalCopyMode
+		err := json.Unmarshal([]byte(fmt.Sprintf("%v", tc.input)), &got)
+		require.NoError(t, err)
+		require.Equalf(t, tc.expected, got, "for input: %v", tc.input)
+	}
+}
+
+func TestUnmarshalWebTerminalCopyModeYAML(t *testing.T) {
+	for _, tc := range []struct {
+		input    any
+		expected WebTerminalCopyMode
+	}{
+		{input: `""`, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNSPECIFIED},
+		{input: `"on"`, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON},
+		{input: "on", expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON},
+		{input: `"off"`, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF},
+		{input: "off", expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF},
+		{input: true, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON},
+		{input: false, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF},
+		{input: 0, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNSPECIFIED},
+		{input: 1, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON},
+		{input: 2, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF},
+	} {
+		var got WebTerminalCopyMode
+		err := yaml.Unmarshal([]byte(fmt.Sprintf("%v", tc.input)), &got)
+		require.NoError(t, err)
+		require.Equalf(t, tc.expected, got, "for input: %v", tc.input)
+	}
+}
+
 func TestRoleV6_CheckAndSetDefaults(t *testing.T) {
 	t.Parallel()
 	requireBadParameterContains := func(contains string) require.ErrorAssertionFunc {
@@ -1131,6 +1205,15 @@ func TestRoleV6_CheckAndSetDefaults(t *testing.T) {
 				},
 			}),
 			requireError: requireBadParameterContains("validating ip_sans[1]: invalid CIDR address: llama"),
+		},
+		{
+			name: "web terminal copy mode: invalid",
+			role: newRole(t, RoleSpecV6{
+				Options: RoleOptions{
+					WebTerminalCopyMode: WebTerminalCopyMode(99),
+				},
+			}),
+			requireError: requireBadParameterContains("invalid web terminal copy mode"),
 		},
 	}
 

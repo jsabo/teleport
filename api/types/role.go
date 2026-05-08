@@ -1358,6 +1358,9 @@ func (r *RoleV6) CheckAndSetDefaults() error {
 	if _, ok := CreateHostUserMode_name[int32(r.Spec.Options.CreateHostUserMode)]; !ok {
 		return trace.BadParameter("invalid host user mode %q, expected one of off, drop or keep", r.Spec.Options.CreateHostUserMode)
 	}
+	if _, ok := WebTerminalCopyMode_name[int32(r.Spec.Options.WebTerminalCopyMode)]; !ok {
+		return trace.BadParameter("invalid web terminal copy mode %v, expected on or off", r.Spec.Options.WebTerminalCopyMode)
+	}
 
 	switch r.Version {
 	case V3:
@@ -2763,6 +2766,110 @@ func (h *CreateDatabaseUserMode) UnmarshalJSON(data []byte) error {
 // IsEnabled returns true if database automatic user provisioning is enabled.
 func (m CreateDatabaseUserMode) IsEnabled() bool {
 	return m != CreateDatabaseUserMode_DB_USER_MODE_UNSPECIFIED && m != CreateDatabaseUserMode_DB_USER_MODE_OFF
+}
+
+const (
+	webTerminalCopyModeOnString  = "on"
+	webTerminalCopyModeOffString = "off"
+)
+
+func (m WebTerminalCopyMode) encode() (string, error) {
+	switch m {
+	case WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNSPECIFIED:
+		return "", nil
+	case WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON:
+		return webTerminalCopyModeOnString, nil
+	case WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF:
+		return webTerminalCopyModeOffString, nil
+	default:
+		return "", trace.BadParameter("invalid web terminal copy mode %v", m)
+	}
+}
+
+func (m *WebTerminalCopyMode) decode(val any) error {
+	var str string
+	switch val := val.(type) {
+	case int32:
+		return trace.Wrap(m.setFromEnum(val))
+	case int64:
+		return trace.Wrap(m.setFromEnum(int32(val)))
+	case int:
+		return trace.Wrap(m.setFromEnum(int32(val)))
+	case float64:
+		return trace.Wrap(m.setFromEnum(int32(val)))
+	case float32:
+		return trace.Wrap(m.setFromEnum(int32(val)))
+	case string:
+		str = val
+	case bool:
+		if val {
+			*m = WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON
+		} else {
+			*m = WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF
+		}
+		return nil
+	default:
+		return trace.BadParameter("bad value type %T, expected string, int, or bool", val)
+	}
+
+	switch str {
+	case "":
+		*m = WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNSPECIFIED
+	case webTerminalCopyModeOnString:
+		*m = WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON
+	case webTerminalCopyModeOffString:
+		*m = WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF
+	default:
+		return trace.BadParameter("invalid web terminal copy mode %v", val)
+	}
+	return nil
+}
+
+func (m *WebTerminalCopyMode) setFromEnum(val int32) error {
+	if _, ok := WebTerminalCopyMode_name[val]; !ok {
+		return trace.BadParameter("invalid web terminal copy mode %v", val)
+	}
+	*m = WebTerminalCopyMode(val)
+	return nil
+}
+
+// MarshalYAML marshals WebTerminalCopyMode to yaml.
+func (m WebTerminalCopyMode) MarshalYAML() (interface{}, error) {
+	val, err := m.encode()
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	return val, nil
+}
+
+// UnmarshalYAML supports parsing WebTerminalCopyMode from string.
+func (m *WebTerminalCopyMode) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var val interface{}
+	err := unmarshal(&val)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	return trace.Wrap(m.decode(val))
+}
+
+// MarshalJSON marshals WebTerminalCopyMode to json bytes.
+func (m WebTerminalCopyMode) MarshalJSON() ([]byte, error) {
+	val, err := m.encode()
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	out, err := json.Marshal(val)
+	return out, trace.Wrap(err)
+}
+
+// UnmarshalJSON supports parsing WebTerminalCopyMode from string.
+func (m *WebTerminalCopyMode) UnmarshalJSON(data []byte) error {
+	var val interface{}
+	err := json.Unmarshal(data, &val)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	return trace.Wrap(m.decode(val))
 }
 
 // GetAccount fetches the Account ID from a Role Condition Account Assignment

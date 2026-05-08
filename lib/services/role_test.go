@@ -4187,6 +4187,58 @@ func TestCanCopyFiles(t *testing.T) {
 	}
 }
 
+// TestGetWebTerminalCopyMode verifies that the RoleSet.GetWebTerminalCopyMode method calculates the correct copy mode from a set of roles.
+func TestGetWebTerminalCopyMode(t *testing.T) {
+	tests := []struct {
+		name   string
+		values []types.WebTerminalCopyMode
+		expect types.WebTerminalCopyMode
+	}{
+		{
+			name:   "unspecified",
+			values: []types.WebTerminalCopyMode{types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNSPECIFIED},
+			expect: types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNSPECIFIED,
+		},
+		{
+			name:   "on",
+			values: []types.WebTerminalCopyMode{types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON},
+			expect: types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON,
+		},
+		{
+			name:   "off",
+			values: []types.WebTerminalCopyMode{types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF},
+			expect: types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF,
+		},
+		{
+			name:   "roles have both on and off, off takes precedence",
+			values: []types.WebTerminalCopyMode{types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON, types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF},
+			expect: types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF,
+		},
+		{
+			name:   "roles have both unspecified and off, off takes precedence",
+			values: []types.WebTerminalCopyMode{types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNSPECIFIED, types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF},
+			expect: types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var roles RoleSet
+			for _, v := range tt.values {
+				roles = append(roles, &types.RoleV6{
+					Spec: types.RoleSpecV6{
+						Options: types.RoleOptions{
+							WebTerminalCopyMode: v,
+						},
+					},
+				})
+			}
+
+			require.Equal(t, tt.expect, roles.GetWebTerminalCopyMode())
+		})
+	}
+}
+
 // TestBoolOptions makes sure that bool options (like agent forwarding and
 // port forwarding) can be disabled in a role.
 func TestBoolOptions(t *testing.T) {

@@ -3708,6 +3708,15 @@ enum CreateDatabaseUserMode {
   DB_USER_MODE_BEST_EFFORT_DROP = 3;
 }
 
+// WebTerminalCopyMode determines whether copying from the Web UI terminal is enabled.
+enum WebTerminalCopyMode {
+  WEB_TERMINAL_COPY_MODE_UNSPECIFIED = 0;
+  // WEB_TERMINAL_COPY_MODE_ON enables copying from the Web UI terminal.
+  WEB_TERMINAL_COPY_MODE_ON = 1;
+  // WEB_TERMINAL_COPY_MODE_OFF prevents copying from the Web UI terminal.
+  WEB_TERMINAL_COPY_MODE_OFF = 2;
+}
+
 // SSHLocalPortForwarding configures access controls for local SSH port forwarding.
 message SSHLocalPortForwarding {
   BoolValue Enabled = 1 [
@@ -3929,6 +3938,11 @@ message RoleOptions {
     (gogoproto.nullable) = true,
     (gogoproto.jsontag) = "ssh_port_forwarding,omitempty"
   ];
+
+  // WebTerminalCopyMode indicates whether copying from the Web UI terminal is enabled.
+  // Valid values are "on" and "off".
+  // Defaults to "on" if unspecified.
+  WebTerminalCopyMode WebTerminalCopyMode = 33 [(gogoproto.jsontag) = "web_terminal_copy_mode,omitempty"];
 }
 
 message RecordSession {

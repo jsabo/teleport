@@ -3214,6 +3214,21 @@ func (set RoleSet) CanCopyFiles() bool {
 	return true
 }
 
+// GetWebTerminalCopyMode returns the Web UI terminal copy mode from the role set.
+func (set RoleSet) GetWebTerminalCopyMode() types.WebTerminalCopyMode {
+	var mode types.WebTerminalCopyMode
+	for _, r := range set {
+		switch r.GetOptions().WebTerminalCopyMode {
+		// Return immediately if any role has explicitly set the copy mode to off, as that should take precedence over any on's.
+		case types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF:
+			return types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF
+		case types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON:
+			mode = types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON
+		}
+	}
+	return mode
+}
+
 // CanJoinSessions returns true if at least one role in the role set
 // allows the user to join active sessions.
 func (set RoleSet) CanJoinSessions() bool {
