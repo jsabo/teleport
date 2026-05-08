@@ -52,42 +52,34 @@ func (tc *TeleportClient) createAuthenticateChallenge(ctx context.Context, req *
 	return rootClient.CreateAuthenticateChallenge(ctx, req)
 }
 
-// NewSessionBoundCeremony creates a new session-bound MFA ceremony configured for this client.
-func (tc *TeleportClient) NewSessionBoundCeremony(ctx context.Context) (*mfa.SessionBoundCeremony, error) {
+// PerformSessionMFACeremony performs a session-bound MFA ceremony for a SSH session and returns the challenge name.
+func (tc *TeleportClient) PerformSessionMFACeremony(ctx context.Context, sessionID []byte) (challengeName string, err error) {
 	clusterClient, err := tc.ConnectToCluster(ctx)
 	if err != nil {
-		return nil, trace.Wrap(err)
+		return "", trace.Wrap(err)
 	}
+	defer clusterClient.Close()
 
 	rootClient, err := clusterClient.ConnectToRootCluster(ctx)
 	if err != nil {
-		return nil, trace.Wrap(err)
+		return "", trace.Wrap(err)
 	}
+	defer rootClient.Close()
 
 	mfaClient := rootClient.MFAServiceClient()
 	if mfaClient == nil {
-		return nil, trace.BadParameter("MFA service client is not initialized (this is a bug)")
+		return "", trace.BadParameter("MFA service client is not initialized (this is a bug)")
 	}
 
-	config := mfa.SessionBoundCeremonyConfig{
-		CreateSessionChallenge:      mfaClient.CreateSessionChallenge,
-		ValidateSessionChallenge:    mfaClient.ValidateSessionChallenge,
-		PromptConstructor:           tc.NewMFAPrompt,
-		CallbackCeremonyConstructor: tc.NewRedirectorMFACeremony,
-		TargetCluster:               tc.SiteName,
-	}
-
-	ceremony, err := mfa.NewSessionBoundCeremony(config)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	return ceremony, nil
-}
-
-// PerformSessionMFACeremony performs a session-bound MFA ceremony for a SSH session and returns the challenge name.
-func (tc *TeleportClient) PerformSessionMFACeremony(ctx context.Context, sessionID []byte) (challengeName string, err error) {
-	ceremony, err := tc.NewSessionBoundCeremony(ctx)
+	ceremony, err := mfa.NewSessionBoundCeremony(
+		mfa.SessionBoundCeremonyConfig{
+			CreateSessionChallenge:      mfaClient.CreateSessionChallenge,
+			ValidateSessionChallenge:    mfaClient.ValidateSessionChallenge,
+			PromptConstructor:           tc.NewMFAPrompt,
+			CallbackCeremonyConstructor: tc.NewRedirectorMFACeremony,
+			TargetCluster:               tc.SiteName,
+		},
+	)
 	if err != nil {
 		return "", trace.Wrap(err)
 	}
