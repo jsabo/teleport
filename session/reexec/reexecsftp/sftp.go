@@ -81,22 +81,14 @@ func newSFTPHandler(logger *slog.Logger, req *FileTransferRequest, events chan<-
 		allowed = &allowedOps{
 			write: !req.Download,
 		}
-		// TODO(capnspacehook): reject relative paths and symlinks
+		// TODO(capnspacehook):
 		// make filepaths consistent by ensuring all separators use backslashes
 		allowedPath, err := sftputils.ExpandHomeDir(req.Location)
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}
 		if !path.IsAbs(allowedPath) {
-			currentUser, err := user.Current()
-			if err != nil {
-				return nil, trace.Wrap(err)
-			}
-			if currentUser.HomeDir != "" {
-				allowedPath = path.Join(currentUser.HomeDir, allowedPath)
-			} else {
-				allowedPath = path.Join(string(os.PathSeparator), allowedPath)
-			}
+			return nil, trace.BadParameter("allowed path must be absolute")
 		}
 		allowed.path = path.Clean(allowedPath)
 	}
@@ -456,6 +448,15 @@ func openFileNoFollow(file string, flags int, mode os.FileMode) (*os.File, error
 	f, err := openAtAndClose(parent, filename, flags|unix.O_NONBLOCK, mode)
 	if err != nil {
 		return nil, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	if info.Mode()&os.ModeType != 0 {
+		_ = f.Close()
+		return nil, trace.BadParameter("path does not point to a regular file")
 	}
 	return f, nil
 }
