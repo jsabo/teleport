@@ -28,6 +28,7 @@ import (
 	"os"
 	"os/user"
 	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -57,8 +58,15 @@ func (c compositeCh) Close() error {
 }
 
 type allowedOps struct {
+	// write is true if the request is an upload and writes should be
+	// allowed.
 	write bool
-	path  string
+	// path is the path of the file being downloaded or uploaded.
+	path string
+	// fullPath is the full path of the file being uploaded. For uploads
+	// with a non-empty approved Filename, it holds path.Join(path, Filename)
+	// so that the actual file write can be checked against and allowed.
+	fullPath string
 }
 
 // sftpHandler provides handlers for a SFTP server.
@@ -97,6 +105,19 @@ func newSFTPHandler(logger *slog.Logger, req *FileTransferRequest, events chan<-
 			}
 		}
 		allowed.path = path.Clean(allowedPath)
+
+		// For uploads, Location is the destination — possibly a directory —
+		// and Filename is the name of the file being uploaded. The actual
+		// SFTP write targets path.Join(Location, Filename), so allow
+		// operations on that joined path as well. Reject Filename values
+		// that contain path separators so a client can't escape Location
+		// via the join.
+		if !req.Download && req.Filename != "" {
+			if !filepath.IsLocal(req.Filename) {
+				return nil, trace.BadParameter("filename %s must not contain path separators", req.Filename)
+			}
+			allowed.fullPath = path.Join(allowed.path, req.Filename)
+		}
 	}
 
 	return &sftpHandler{
@@ -115,7 +136,7 @@ func (s *sftpHandler) ensureReqIsAllowed(req *sftp.Request) error {
 	}
 
 	cleaned := path.Clean(req.Filepath)
-	if s.allowed.path != cleaned {
+	if cleaned != s.allowed.path && cleaned != s.allowed.fullPath {
 		return trace.Errorf("operations are only allowed on %s, not %s", s.allowed.path, cleaned)
 	}
 

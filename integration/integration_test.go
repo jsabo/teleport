@@ -7974,7 +7974,8 @@ func testModeratedSFTP(t *testing.T, suite *integrationTestSuite) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Create and approve a file download request
 			tempDir := t.TempDir()
-			reqFile := filepath.Join(tempDir, "req-file")
+			filename := "req-file"
+			reqFile := filepath.Join(tempDir, filename)
 			err = os.WriteFile(reqFile, []byte("contents"), 0o666)
 			require.NoError(t, err)
 
@@ -8021,14 +8022,14 @@ func testModeratedSFTP(t *testing.T, suite *integrationTestSuite) {
 			require.ErrorContains(t, err, fmt.Sprintf("operations are only allowed on %s, not %s", reqFile, badFile))
 			// Since this is a download no files should be allowed to be written to
 			_, err = sftpClient.OpenFile(reqFile, os.O_WRONLY)
-			require.ErrorContains(t, err, `writing is not allowed`)
+			require.ErrorContains(t, err, "writing is not allowed")
 			// Only stats and reads should be allowed
 			err = sftpClient.Mkdir(reqFile)
-			require.ErrorContains(t, err, `method mkdir is not allowed on `+reqFile)
+			require.ErrorContains(t, err, "method mkdir is not allowed on "+reqFile)
 			// Since this is a download no files should be allowed to have
 			// their permissions changed
 			err = sftpClient.Chmod(reqFile, 0o777)
-			require.ErrorContains(t, err, `writing is not allowed`)
+			require.ErrorContains(t, err, "writing is not allowed")
 
 			// Only necessary operations should be allowed
 			_, err = sftpClient.Stat(reqFile)
@@ -8044,8 +8045,8 @@ func testModeratedSFTP(t *testing.T, suite *integrationTestSuite) {
 			// Create and approve a file upload request
 			err = tc.sess.RequestFileTransfer(ctx, tracessh.FileTransferReq{
 				Download: false,
-				Filename: "upload-file",
-				Location: reqFile,
+				Location: tempDir,
+				Filename: filename,
 			})
 			require.NoError(t, err)
 
@@ -8063,7 +8064,7 @@ func testModeratedSFTP(t *testing.T, suite *integrationTestSuite) {
 			transferSess, err = tc.sshClient.NewSession(ctx)
 			require.NoError(t, err)
 			t.Cleanup(func() {
-				require.NoError(t, transferSess.Close())
+				isNilOrEOFErr(t, transferSess.Close())
 			})
 
 			err = transferSess.Setenv(ctx, telesftp.EnvModeratedSessionID, sessTracker.GetSessionID())
@@ -8082,13 +8083,13 @@ func testModeratedSFTP(t *testing.T, suite *integrationTestSuite) {
 
 			// A file not in the request shouldn't be allowed
 			_, err = sftpClient.Open(badFile)
-			require.ErrorContains(t, err, fmt.Sprintf("operations are only allowed on %s, not %s", reqFile, badFile))
+			require.ErrorContains(t, err, fmt.Sprintf("operations are only allowed on %s, not %s", tempDir, badFile))
 			// Since this is an upload no files should be allowed to be read from
 			_, err = sftpClient.OpenFile(reqFile, os.O_RDONLY)
-			require.ErrorContains(t, err, `reading is not allowed`)
+			require.ErrorContains(t, err, "reading is not allowed")
 			// Only stats, writes, and chmods should be allowed
 			err = sftpClient.Mkdir(reqFile)
-			require.ErrorContains(t, err, `method mkdir is not allowed on `+reqFile)
+			require.ErrorContains(t, err, "method mkdir is not allowed on "+reqFile)
 
 			// Only necessary operations should be allowed
 			_, err = sftpClient.Stat(reqFile)
