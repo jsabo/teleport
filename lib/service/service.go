@@ -172,6 +172,7 @@ import (
 	alpnproxyauth "github.com/gravitational/teleport/lib/srv/alpnproxy/auth"
 	alpncommon "github.com/gravitational/teleport/lib/srv/alpnproxy/common"
 	"github.com/gravitational/teleport/lib/srv/app"
+	"github.com/gravitational/teleport/lib/srv/app/policy"
 	"github.com/gravitational/teleport/lib/srv/db"
 	"github.com/gravitational/teleport/lib/srv/desktop"
 	"github.com/gravitational/teleport/lib/srv/ingress"
@@ -6898,6 +6899,13 @@ func (process *TeleportProcess) initApps() {
 			return trace.Wrap(err)
 		}
 
+		policiesByApp := map[string][]policy.Policy{}
+		for _, app := range process.Config.Apps.Apps {
+			if len(app.Policies) > 0 {
+				policiesByApp[app.Name] = app.Policies
+			}
+		}
+
 		connectionsHandler, err := app.NewConnectionsHandler(process.ExitContext(), &app.ConnectionsHandlerConfig{
 			InsecureMode:      process.Config.InsecureMode,
 			Clock:             process.Config.Clock,
@@ -6914,6 +6922,7 @@ func (process *TeleportProcess) initApps() {
 			Logger:            logger,
 			LimiterConfig:     process.Config.Apps.Limiter,
 			MCPDemoServer:     process.Config.Apps.MCPDemoServer,
+			Policies:          policiesByApp,
 		})
 		if err != nil {
 			return trace.Wrap(err)

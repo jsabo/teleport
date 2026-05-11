@@ -31,6 +31,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,13 +41,14 @@ import (
 	"github.com/gravitational/teleport"
 	apidefaults "github.com/gravitational/teleport/api/defaults"
 	"github.com/gravitational/teleport/api/types"
-	"github.com/gravitational/teleport/api/types/events"
+	apievents "github.com/gravitational/teleport/api/types/events"
 	apiutils "github.com/gravitational/teleport/api/utils"
 	"github.com/gravitational/teleport/api/utils/clientutils"
 	"github.com/gravitational/teleport/lib/auth/authclient"
 	"github.com/gravitational/teleport/lib/authz"
 	"github.com/gravitational/teleport/lib/cloud/awsconfig"
 	"github.com/gravitational/teleport/lib/defaults"
+	"github.com/gravitational/teleport/lib/events"
 	"github.com/gravitational/teleport/lib/httplib"
 	"github.com/gravitational/teleport/lib/limiter"
 	"github.com/gravitational/teleport/lib/services"
@@ -55,6 +57,7 @@ import (
 	appazure "github.com/gravitational/teleport/lib/srv/app/azure"
 	"github.com/gravitational/teleport/lib/srv/app/common"
 	appgcp "github.com/gravitational/teleport/lib/srv/app/gcp"
+	"github.com/gravitational/teleport/lib/srv/app/policy"
 	"github.com/gravitational/teleport/lib/srv/mcp"
 	"github.com/gravitational/teleport/lib/tlsca"
 	"github.com/gravitational/teleport/lib/utils"
@@ -76,7 +79,7 @@ type ConnectionsHandlerConfig struct {
 	DataDir string
 
 	// Emitter is an event emitter.
-	Emitter events.Emitter
+	Emitter apievents.Emitter
 
 	// Authorizer is used to authorize requests.
 	Authorizer authz.Authorizer
@@ -124,6 +127,10 @@ type ConnectionsHandlerConfig struct {
 
 	// InsecureMode defines whether insecure connections are allowed.
 	InsecureMode bool
+
+	// Policies maps app name to the compiled policy set for that app.
+	// Apps with no entry skip the policy engine entirely.
+	Policies map[string][]policy.Policy
 }
 
 // CheckAndSetDefaults validates the config values and sets defaults.
@@ -401,9 +408,95 @@ func (c *ConnectionsHandler) serveSession(w http.ResponseWriter, r *http.Request
 		Audit:    session.audit,
 	}
 
-	// Forward request to the target application.
 	session.handler.ServeHTTP(w, common.WithSessionContext(r, sessionCtx))
 	return nil
+}
+
+// applyPolicies runs the attached policies for app against the request.
+// Returns true if the request was answered (deny served, no further
+// forwarding). Returns false if the engine allowed the request or no
+// policies are attached.
+func (c *ConnectionsHandler) applyPolicies(w http.ResponseWriter, r *http.Request, identity *tlsca.Identity, app types.Application) bool {
+	policies := c.cfg.Policies[app.GetName()]
+	if len(policies) == 0 {
+		return false
+	}
+
+	normPath, normErr := policy.Normalize(r.URL.RequestURI())
+	req := policy.Request{
+		Method:    strings.ToUpper(r.Method),
+		Path:      normPath,
+		UserName:  identity.Username,
+		UserRoles: identity.Groups,
+	}
+	if normErr != nil {
+		code, _ := policy.IsNormalizeError(normErr)
+		req.NormalizeCode = code
+		req.NormalizeErr = normErr.Error()
+	}
+
+	decision := policy.Evaluate(policies, req)
+	c.logPolicyDecision(r.Context(), identity, app, req, decision)
+	if decision.Allow {
+		return false
+	}
+	c.emitPolicyDenyAuditEvent(r.Context(), identity, app, r, decision)
+
+	w.Header().Set("Teleport-Decision-Reason", decision.ReasonCode)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusForbidden)
+	// Body carries only the reason code. Operator-authored reasons and
+	// raw normalize / predicate error text stay in the audit record so
+	// they cannot be reflected back to a probing client.
+	_, _ = w.Write([]byte(decision.ReasonCode))
+	return true
+}
+
+func (c *ConnectionsHandler) logPolicyDecision(ctx context.Context, identity *tlsca.Identity, app types.Application, req policy.Request, d policy.Decision) {
+	verdict := "allow"
+	if !d.Allow {
+		verdict = "deny"
+	}
+	c.log.LogAttrs(ctx, slog.LevelDebug, "app.session.policy",
+		slog.String("user", identity.Username),
+		slog.String("app", app.GetName()),
+		slog.String("session_id", identity.RouteToApp.SessionID),
+		slog.String("method", req.Method),
+		slog.String("path", req.Path),
+		slog.String("decision", verdict),
+		slog.String("reason_code", d.ReasonCode),
+		slog.String("reason", d.Reason),
+		slog.String("policy_ref", d.PolicyRef),
+		slog.Any("bound_vars", d.BoundVars),
+		slog.Any("policies_evaluated", d.EvalSummary.PoliciesEvaluated),
+	)
+}
+
+// emitPolicyDenyAuditEvent emits a 403 AppSessionRequest event for a
+// policy-denied request. audit.EmitEvent routes this event type only
+// to session recording for the forwarded path; deny never creates a
+// session chunk, so we go through the cluster audit emitter directly
+// to ensure denies land in tctl events and any SIEM ingesting the
+// audit log.
+func (c *ConnectionsHandler) emitPolicyDenyAuditEvent(ctx context.Context, identity *tlsca.Identity, app types.Application, r *http.Request, d policy.Decision) {
+	event := &apievents.AppSessionRequest{
+		Metadata: apievents.Metadata{
+			Type: events.AppSessionRequestEvent,
+			Code: events.AppSessionRequestCode,
+		},
+		AppMetadata: apievents.AppMetadata{
+			AppURI:        app.GetURI(),
+			AppPublicAddr: app.GetPublicAddr(),
+			AppName:       app.GetName(),
+		},
+		Method:     r.Method,
+		Path:       r.URL.Path,
+		RawQuery:   r.URL.RawQuery,
+		StatusCode: http.StatusForbidden,
+	}
+	if err := c.cfg.Emitter.EmitAuditEvent(ctx, event); err != nil {
+		c.log.WarnContext(ctx, "Failed to emit policy deny audit event.", "error", err)
+	}
 }
 
 // sessionStartTime fetches the session start time based on the certificate
@@ -453,6 +546,11 @@ func (c *ConnectionsHandler) serveHTTP(w http.ResponseWriter, r *http.Request) e
 	}
 
 	identity := authCtx.Identity.GetIdentity()
+	// Apply policy-based access ahead of dispatch so every HTTP path,
+	// including the AWS console redirect, runs through the same gate.
+	if c.applyPolicies(w, r, &identity, app) {
+		return nil
+	}
 	switch {
 	case app.IsAWSConsole():
 		// Requests from AWS applications are signed by AWS Signature Version 4
