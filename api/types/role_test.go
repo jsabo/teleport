@@ -1063,8 +1063,8 @@ func TestMarshalWebTerminalCopyModeJSON(t *testing.T) {
 		expected string
 	}{
 		{input: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNSPECIFIED, expected: ""},
-		{input: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON, expected: "on"},
-		{input: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF, expected: "off"},
+		{input: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNRESTRICTED, expected: "unrestricted"},
+		{input: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_BLOCKED, expected: "blocked"},
 	} {
 		got, err := json.Marshal(&tc.input)
 		require.NoError(t, err)
@@ -1078,8 +1078,8 @@ func TestMarshalWebTerminalCopyModeYAML(t *testing.T) {
 		expected string
 	}{
 		{input: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNSPECIFIED, expected: `""`},
-		{input: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON, expected: `"on"`},
-		{input: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF, expected: `"off"`},
+		{input: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNRESTRICTED, expected: "unrestricted"},
+		{input: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_BLOCKED, expected: "blocked"},
 	} {
 		got, err := yaml.Marshal(&tc.input)
 		require.NoError(t, err)
@@ -1093,13 +1093,11 @@ func TestUnmarshalWebTerminalCopyModeJSON(t *testing.T) {
 		expected WebTerminalCopyMode
 	}{
 		{input: `""`, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNSPECIFIED},
-		{input: `"on"`, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON},
-		{input: `"off"`, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF},
-		{input: true, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON},
-		{input: false, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF},
+		{input: `"unrestricted"`, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNRESTRICTED},
+		{input: `"blocked"`, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_BLOCKED},
 		{input: 0, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNSPECIFIED},
-		{input: 1, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON},
-		{input: 2, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF},
+		{input: 1, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNRESTRICTED},
+		{input: 2, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_BLOCKED},
 	} {
 		var got WebTerminalCopyMode
 		err := json.Unmarshal([]byte(fmt.Sprintf("%v", tc.input)), &got)
@@ -1114,15 +1112,13 @@ func TestUnmarshalWebTerminalCopyModeYAML(t *testing.T) {
 		expected WebTerminalCopyMode
 	}{
 		{input: `""`, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNSPECIFIED},
-		{input: `"on"`, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON},
-		{input: "on", expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON},
-		{input: `"off"`, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF},
-		{input: "off", expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF},
-		{input: true, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON},
-		{input: false, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF},
+		{input: `"unrestricted"`, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNRESTRICTED},
+		{input: "unrestricted", expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNRESTRICTED},
+		{input: `"blocked"`, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_BLOCKED},
+		{input: "blocked", expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_BLOCKED},
 		{input: 0, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNSPECIFIED},
-		{input: 1, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON},
-		{input: 2, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF},
+		{input: 1, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNRESTRICTED},
+		{input: 2, expected: WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_BLOCKED},
 	} {
 		var got WebTerminalCopyMode
 		err := yaml.Unmarshal([]byte(fmt.Sprintf("%v", tc.input)), &got)

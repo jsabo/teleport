@@ -333,10 +333,10 @@ func NewUserACL(user types.User, userRoles RoleSet, features proto.Features, des
 
 func webTerminalCopyModeValue(mode types.WebTerminalCopyMode) string {
 	switch mode {
-	case types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON:
-		return "on"
-	case types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF:
-		return "off"
+	case types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNRESTRICTED:
+		return "unrestricted"
+	case types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_BLOCKED:
+		return "blocked"
 	default:
 		return ""
 	}

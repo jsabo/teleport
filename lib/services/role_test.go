@@ -4200,24 +4200,24 @@ func TestGetWebTerminalCopyMode(t *testing.T) {
 			expect: types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNSPECIFIED,
 		},
 		{
-			name:   "on",
-			values: []types.WebTerminalCopyMode{types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON},
-			expect: types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON,
+			name:   "unrestricted",
+			values: []types.WebTerminalCopyMode{types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNRESTRICTED},
+			expect: types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNRESTRICTED,
 		},
 		{
-			name:   "off",
-			values: []types.WebTerminalCopyMode{types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF},
-			expect: types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF,
+			name:   "blocked",
+			values: []types.WebTerminalCopyMode{types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_BLOCKED},
+			expect: types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_BLOCKED,
 		},
 		{
-			name:   "roles have both on and off, off takes precedence",
-			values: []types.WebTerminalCopyMode{types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON, types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF},
-			expect: types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF,
+			name:   "roles have both unrestricted and blocked, blocked takes precedence",
+			values: []types.WebTerminalCopyMode{types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNRESTRICTED, types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_BLOCKED},
+			expect: types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_BLOCKED,
 		},
 		{
-			name:   "roles have both unspecified and off, off takes precedence",
-			values: []types.WebTerminalCopyMode{types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNSPECIFIED, types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF},
-			expect: types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF,
+			name:   "roles have both unspecified and blocked, blocked takes precedence",
+			values: []types.WebTerminalCopyMode{types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNSPECIFIED, types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_BLOCKED},
+			expect: types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_BLOCKED,
 		},
 	}
 

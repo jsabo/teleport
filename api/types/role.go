@@ -1359,7 +1359,7 @@ func (r *RoleV6) CheckAndSetDefaults() error {
 		return trace.BadParameter("invalid host user mode %q, expected one of off, drop or keep", r.Spec.Options.CreateHostUserMode)
 	}
 	if _, ok := WebTerminalCopyMode_name[int32(r.Spec.Options.WebTerminalCopyMode)]; !ok {
-		return trace.BadParameter("invalid web terminal copy mode %v, expected on or off", r.Spec.Options.WebTerminalCopyMode)
+		return trace.BadParameter("invalid web terminal copy mode %v, expected unrestricted or blocked", r.Spec.Options.WebTerminalCopyMode)
 	}
 
 	switch r.Version {
@@ -2769,18 +2769,18 @@ func (m CreateDatabaseUserMode) IsEnabled() bool {
 }
 
 const (
-	webTerminalCopyModeOnString  = "on"
-	webTerminalCopyModeOffString = "off"
+	webTerminalCopyModeUnrestrictedString = "unrestricted"
+	webTerminalCopyModeBlockedString      = "blocked"
 )
 
 func (m WebTerminalCopyMode) encode() (string, error) {
 	switch m {
 	case WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNSPECIFIED:
 		return "", nil
-	case WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON:
-		return webTerminalCopyModeOnString, nil
-	case WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF:
-		return webTerminalCopyModeOffString, nil
+	case WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNRESTRICTED:
+		return webTerminalCopyModeUnrestrictedString, nil
+	case WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_BLOCKED:
+		return webTerminalCopyModeBlockedString, nil
 	default:
 		return "", trace.BadParameter("invalid web terminal copy mode %v", m)
 	}
@@ -2801,24 +2801,17 @@ func (m *WebTerminalCopyMode) decode(val any) error {
 		return trace.Wrap(m.setFromEnum(int32(val)))
 	case string:
 		str = val
-	case bool:
-		if val {
-			*m = WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON
-		} else {
-			*m = WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF
-		}
-		return nil
 	default:
-		return trace.BadParameter("bad value type %T, expected string, int, or bool", val)
+		return trace.BadParameter("bad value type %T, expected string or int", val)
 	}
 
 	switch str {
 	case "":
 		*m = WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNSPECIFIED
-	case webTerminalCopyModeOnString:
-		*m = WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON
-	case webTerminalCopyModeOffString:
-		*m = WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF
+	case webTerminalCopyModeUnrestrictedString:
+		*m = WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNRESTRICTED
+	case webTerminalCopyModeBlockedString:
+		*m = WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_BLOCKED
 	default:
 		return trace.BadParameter("invalid web terminal copy mode %v", val)
 	}

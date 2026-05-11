@@ -3219,11 +3219,11 @@ func (set RoleSet) GetWebTerminalCopyMode() types.WebTerminalCopyMode {
 	var mode types.WebTerminalCopyMode
 	for _, r := range set {
 		switch r.GetOptions().WebTerminalCopyMode {
-		// Return immediately if any role has explicitly set the copy mode to off, as that should take precedence over any on's.
-		case types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF:
-			return types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_OFF
-		case types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON:
-			mode = types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_ON
+		// Return immediately if any role has explicitly set the copy mode to blocked, as that should take precedence over any unrestricted's.
+		case types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_BLOCKED:
+			return types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_BLOCKED
+		case types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNRESTRICTED:
+			mode = types.WebTerminalCopyMode_WEB_TERMINAL_COPY_MODE_UNRESTRICTED
 		}
 	}
 	return mode
