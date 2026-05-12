@@ -41,6 +41,7 @@ pub struct RdpDecoder {
     cursor_state: CursorState,
     updated_regions: UpdatedRegions,
     resizer: Resizer,
+    composite_scratch: Vec<u8>,
     thumbnail_scratch: Vec<u8>,
 }
 
@@ -65,6 +66,7 @@ impl RdpDecoder {
             cursor_state: Default::default(),
             updated_regions: Default::default(),
             resizer: Resizer::new(),
+            composite_scratch: Vec::new(),
             thumbnail_scratch: Vec::new(),
         }
     }
@@ -137,7 +139,7 @@ impl RdpDecoder {
             .use_alpha(false);
 
         if fw == width && fh == height {
-            return self.resize_image_into(fw, fh, dst, &opts);
+            return self.resize_image_into(fw, fh, dst, &opts, None);
         }
 
         let fitted_bytes = (fw as usize) * (fh as usize) * 4;
@@ -147,18 +149,23 @@ impl RdpDecoder {
 
         let Self {
             image,
+            cursor_state,
             resizer,
+            composite_scratch,
             thumbnail_scratch,
             ..
         } = self;
 
         image::resize_into(
             image,
+            cursor_state,
             resizer,
+            composite_scratch,
             fw,
             fh,
             &mut thumbnail_scratch[..fitted_bytes],
             &opts,
+            None,
         )?;
 
         let row_bytes = (fw as usize) * 4;
@@ -309,6 +316,10 @@ pub unsafe extern "C" fn rdp_decoder_image_data(
 /// obtain `out_width` and `out_height` from `rdp_decoder_fitted_dimensions`
 /// so the source aspect ratio is preserved.
 ///
+/// When `cursor_visible` is non-zero, the cursor is composited onto the
+/// source frame at (`cursor_x`, `cursor_y`) before resizing, so it scales
+/// with the screen. The cursor coords are in source-frame pixels.
+///
 /// # Safety
 ///
 /// - `ptr` must be a valid pointer previously returned by `rdp_decoder_new`.
@@ -320,6 +331,9 @@ pub unsafe extern "C" fn rdp_decoder_resized_image(
     out_height: u16,
     out_buf: *mut u8,
     out_buf_len: usize,
+    cursor_visible: u8,
+    cursor_x: u16,
+    cursor_y: u16,
 ) {
     if ptr.is_null() || out_buf.is_null() || out_width == 0 || out_height == 0 {
         return;
@@ -334,10 +348,16 @@ pub unsafe extern "C" fn rdp_decoder_resized_image(
         .resize_alg(ResizeAlg::Convolution(FilterType::CatmullRom))
         .use_alpha(false);
 
+    let cursor = if cursor_visible != 0 {
+        Some((cursor_x, cursor_y))
+    } else {
+        None
+    };
+
     let _ = catch_unwind(AssertUnwindSafe(move || unsafe {
         let decoder = &mut *ptr;
         let dst = std::slice::from_raw_parts_mut(out_buf, needed);
-        let _ = decoder.resize_image_into(out_width, out_height, dst, &opts);
+        let _ = decoder.resize_image_into(out_width, out_height, dst, &opts, cursor);
     }));
 }
 
@@ -398,7 +418,7 @@ pub unsafe extern "C" fn rdp_decoder_resize_crop(
         }
 
         let dst = std::slice::from_raw_parts_mut(out_buf, needed);
-        let _ = decoder.resize_image_into(out_width, out_height, dst, &opts);
+        let _ = decoder.resize_image_into(out_width, out_height, dst, &opts, None);
     }));
 }
 
@@ -492,42 +512,6 @@ pub unsafe extern "C" fn rdp_decoder_cursor_state(
         *out_x = x;
         *out_y = y;
     }));
-}
-
-/// Returns a pointer to the cursor bitmap data and its dimensions via out-params.
-/// Returns null if no cursor bitmap is available. The returned pointer is valid
-/// as long as the decoder is alive and no new PointerBitmap update is processed.
-///
-/// # Safety
-///
-/// - `ptr` must be a valid pointer previously returned by `rdp_decoder_new`.
-/// - All out-params must be valid, non-null pointers.
-#[no_mangle]
-pub unsafe extern "C" fn rdp_decoder_cursor_bitmap(
-    ptr: *mut RdpDecoder,
-    out_width: *mut u16,
-    out_height: *mut u16,
-    out_hotspot_x: *mut u16,
-    out_hotspot_y: *mut u16,
-) -> *const u8 {
-    if ptr.is_null()
-        || out_width.is_null()
-        || out_height.is_null()
-        || out_hotspot_x.is_null()
-        || out_hotspot_y.is_null()
-    {
-        return ptr::null();
-    }
-
-    catch_unwind(AssertUnwindSafe(move || unsafe {
-        let decoder = &*ptr;
-        let Some(bmp) = decoder.cursor_state.bitmap() else {
-            return ptr::null();
-        };
-        bmp.write_metadata(out_width, out_height, out_hotspot_x, out_hotspot_y);
-        bmp.data_ptr()
-    }))
-    .unwrap_or(ptr::null())
 }
 
 /// Copies update regions into the caller-provided buffer as (left, top, right, bottom)

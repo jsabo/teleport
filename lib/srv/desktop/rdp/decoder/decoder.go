@@ -42,8 +42,6 @@ package decoder
 #cgo noescape rdp_decoder_image_data
 #cgo nocallback rdp_decoder_cursor_state
 #cgo noescape rdp_decoder_cursor_state
-#cgo nocallback rdp_decoder_cursor_bitmap
-#cgo noescape rdp_decoder_cursor_bitmap
 #cgo nocallback rdp_decoder_updated_regions_count
 #cgo noescape rdp_decoder_updated_regions_count
 #cgo nocallback rdp_decoder_updated_regions
@@ -70,11 +68,10 @@ void rdp_decoder_resize(RdpDecoder* ptr, uint16_t width, uint16_t height);
 void rdp_decoder_process(RdpDecoder* ptr, const uint8_t* data, size_t len);
 const uint8_t* rdp_decoder_image_data(RdpDecoder* ptr, uint16_t* width, uint16_t* height);
 void rdp_decoder_cursor_state(RdpDecoder* ptr, uint8_t* out_visible, uint16_t* out_x, uint16_t* out_y);
-const uint8_t* rdp_decoder_cursor_bitmap(RdpDecoder* ptr, uint16_t* out_width, uint16_t* out_height, uint16_t* out_hotspot_x, uint16_t* out_hotspot_y);
 uint32_t rdp_decoder_updated_regions_count(RdpDecoder* ptr);
 uint32_t rdp_decoder_updated_regions(RdpDecoder* ptr, uint16_t* out_buf, uint32_t max_count);
 void rdp_decoder_reset_updated_regions(RdpDecoder* ptr);
-void rdp_decoder_resized_image(RdpDecoder* ptr, uint16_t out_width, uint16_t out_height, uint8_t* out_buf, size_t out_buf_len);
+void rdp_decoder_resized_image(RdpDecoder* ptr, uint16_t out_width, uint16_t out_height, uint8_t* out_buf, size_t out_buf_len, uint8_t cursor_visible, uint16_t cursor_x, uint16_t cursor_y);
 void rdp_decoder_thumbnail(RdpDecoder* ptr, uint16_t out_width, uint16_t out_height, uint8_t* out_buf, size_t out_buf_len);
 void rdp_decoder_resize_crop(RdpDecoder* ptr, uint16_t crop_x, uint16_t crop_y, uint16_t crop_w, uint16_t crop_h, uint16_t out_width, uint16_t out_height, uint8_t* out_buf, size_t out_buf_len);
 void rdp_decoder_dimensions(RdpDecoder* ptr, uint16_t* out_width, uint16_t* out_height);
@@ -189,6 +186,17 @@ func (d *Decoder) Thumbnail(width, height int) *image.RGBA {
 // CatmullRom convolution. If the source frame already fits within those
 // bounds, it is returned at its original dimensions (no upscaling).
 func (d *Decoder) ResizedImage(maxWidth, maxHeight uint16) *image.RGBA {
+	return d.resizedImage(maxWidth, maxHeight, false, 0, 0)
+}
+
+// ResizedImageWithCursor is like ResizedImage but composites the cursor onto
+// the source frame at (cursorX, cursorY) before resizing, so the cursor
+// scales with the screen.
+func (d *Decoder) ResizedImageWithCursor(maxWidth, maxHeight, cursorX, cursorY uint16) *image.RGBA {
+	return d.resizedImage(maxWidth, maxHeight, true, cursorX, cursorY)
+}
+
+func (d *Decoder) resizedImage(maxWidth, maxHeight uint16, cursorVisible bool, cursorX, cursorY uint16) *image.RGBA {
 	if d == nil || d.ptr == nil || maxWidth == 0 || maxHeight == 0 {
 		return nil
 	}
@@ -201,12 +209,20 @@ func (d *Decoder) ResizedImage(maxWidth, maxHeight uint16) *image.RGBA {
 	w, h := fitDimensions(srcW, srcH, maxWidth, maxHeight)
 	buf := make([]byte, int(w)*int(h)*4)
 
+	var visByte C.uint8_t
+	if cursorVisible {
+		visByte = 1
+	}
+
 	C.rdp_decoder_resized_image(
 		d.ptr,
 		C.uint16_t(w),
 		C.uint16_t(h),
 		(*C.uint8_t)(unsafe.SliceData(buf)),
 		C.size_t(len(buf)),
+		visByte,
+		C.uint16_t(cursorX),
+		C.uint16_t(cursorY),
 	)
 
 	return &image.RGBA{
@@ -294,35 +310,6 @@ func (d *Decoder) CursorState() CursorState {
 		Visible: outVisible != 0,
 		X:       uint16(outX),
 		Y:       uint16(outY),
-	}
-}
-
-// CursorBitmap returns the current cursor bitmap, or nil if none is available.
-func (d *Decoder) CursorBitmap() *CursorBitmapData {
-	if d == nil || d.ptr == nil {
-		return nil
-	}
-
-	var bmpW, bmpH, hotX, hotY C.uint16_t
-	bmpData := C.rdp_decoder_cursor_bitmap(d.ptr, &bmpW, &bmpH, &hotX, &hotY)
-	if bmpData == nil || bmpW == 0 || bmpH == 0 {
-		return nil
-	}
-
-	w := int(bmpW)
-	h := int(bmpH)
-
-	cursorPix := make([]byte, w*h*4)
-	copy(cursorPix, unsafe.Slice((*uint8)(bmpData), w*h*4))
-
-	return &CursorBitmapData{
-		Image: &image.RGBA{
-			Pix:    cursorPix,
-			Stride: w * 4,
-			Rect:   image.Rect(0, 0, w, h),
-		},
-		HotspotX: int(hotX),
-		HotspotY: int(hotY),
 	}
 }
 
