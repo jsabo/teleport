@@ -102,6 +102,37 @@ func (s *RDPState) Image() *image.RGBA {
 	return s.decoder.Image()
 }
 
+// ResizedImage returns the current screen image resized to fit within the specified maximum width and height while
+// preserving aspect ratio, as an RGBA bitmap. If the decoder has not been initialized yet, it returns nil.
+func (s *RDPState) ResizedImage(maxWidth, maxHeight uint16) *image.RGBA {
+	if s.decoder == nil {
+		return nil
+	}
+
+	return s.decoder.ResizedImage(maxWidth, maxHeight)
+}
+
+// ResizeCrop returns the source crop region of the current screen image scaled to exactly outWidth x outHeight using
+// high-quality CatmullRom convolution. The crop must lie within the current frame bounds. Returns nil if the decoder
+// has not been initialized.
+func (s *RDPState) ResizeCrop(cropX, cropY, cropW, cropH, outWidth, outHeight uint16) *image.RGBA {
+	if s.decoder == nil {
+		return nil
+	}
+
+	return s.decoder.ResizeCrop(cropX, cropY, cropW, cropH, outWidth, outHeight)
+}
+
+// Dimensions returns the current screen width and height in pixels. Returns (0, 0) if the decoder has not been
+// initialized.
+func (s *RDPState) Dimensions() (width, height uint16) {
+	if s.decoder == nil {
+		return 0, 0
+	}
+
+	return s.decoder.Dimensions()
+}
+
 // Release frees any resources associated with the RDPState, including the decoder.
 func (s *RDPState) Release() {
 	if s.decoder != nil {
