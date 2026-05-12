@@ -619,6 +619,9 @@ func (h *AuthHandlers) PublicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKe
 			}
 		} else {
 			proxyPermit, err = h.evaluateProxying(ident, ca, clusterName.GetClusterName())
+			if errors.Is(err, services.ErrScopedIdentity) {
+				proxyPermit, err = h.evaluateScopedProxying(ident, ca, clusterName.GetClusterName(), h.c.TargetServer, conn.User())
+			}
 		}
 	case teleport.ComponentNode:
 		diagnosticTracing = true
@@ -943,6 +946,7 @@ type loginChecker interface {
 
 type scopedLoginChecker interface {
 	evaluateScopedSSHAccess(ident *sshca.Identity, ca types.CertAuthority, clusterName string, target types.Server, osUser string) (*decisionpb.SSHAccessPermit, error)
+	evaluateScopedProxying(ident *sshca.Identity, ca types.CertAuthority, clusterName string, target types.Server, osUser string) (*proxyingPermit, error)
 }
 
 type proxyingChecker interface {
@@ -1020,6 +1024,85 @@ func (a *ahLoginChecker) evaluateProxying(ident *sshca.Identity, ca types.CertAu
 		MappedRoles:           accessInfo.Roles,
 		SessionRecordingMode:  accessChecker.SessionRecordingMode(constants.SessionRecordingServiceSSH),
 		PinSourceIP:           accessChecker.PinSourceIP(),
+	}, nil
+}
+
+// evaluateScopedProxying is the scoped equivalent of evaluateProxying.
+func (a *ahLoginChecker) evaluateScopedProxying(ident *sshca.Identity, ca types.CertAuthority, clusterName string, target types.Server, osUser string) (*proxyingPermit, error) {
+	ctx := a.c.Server.Context()
+
+	a.log.DebugContext(ctx, "evaluating scoped ssh proxying attempt", "teleport_user", ident.Username)
+
+	accessInfo, err := fetchAccessInfo(ident, ca, clusterName)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	checkerContext, err := services.NewScopedAccessCheckerContext(ctx, accessInfo, clusterName, a.c.AccessPoint.ScopedRoleReader())
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	serverV2, ok := target.(*types.ServerV2)
+	if !ok {
+		return nil, trace.BadParameter("expected target to be of type *types.ServerV2, got %T", target)
+	}
+
+	agentScope := scopes.Root
+	if serverV2.Scope != "" {
+		agentScope = serverV2.Scope
+	}
+
+	netConfig, err := a.c.AccessPoint.GetClusterNetworkingConfig(ctx)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	authPref, err := a.c.AccessPoint.GetAuthPreference(ctx)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	state, err := checkerContext.AccessStateFromSSHIdentity(ctx, ident, a.c.AccessPoint)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	var checker *services.ScopedAccessChecker
+	if err := checkerContext.Decision(ctx, agentScope, func(c *services.ScopedAccessChecker) error {
+		if err := c.SSH().CheckAccessToSSHServer(target, state, osUser); err != nil {
+			return trace.Wrap(err)
+		}
+		checker = c
+		return nil
+	}); err != nil {
+		return nil, trace.AccessDenied("user %s@%s is not authorized to login as %v@%s: %v",
+			ident.Username, ca.GetClusterName(), osUser, clusterName, err)
+	}
+
+	privateKeyPolicy, err := checker.PrivateKeyPolicy(authPref.GetPrivateKeyPolicy())
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	clientIdleTimeout, err := checker.SSH().AdjustClientIdleTimeout(netConfig.GetClientIdleTimeout())
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	lockTargets := services.ProxyingLockTargets(clusterName, a.c.Server.HostUUID(), accessInfo, ident)
+
+	return &proxyingPermit{
+		ClientIdleTimeout:     clientIdleTimeout,
+		LockingMode:           checker.LockingMode(authPref.GetLockingMode()),
+		PrivateKeyPolicy:      privateKeyPolicy,
+		LockTargets:           lockTargets,
+		MaxConnections:        checker.SSH().MaxConnections(),
+		SSHFileCopy:           checker.SSH().CanCopyFiles(),
+		DisconnectExpiredCert: getDisconnectExpiredCertFromSSHIdentityScoped(checker.SSH(), authPref, ident),
+		MappedRoles:           accessInfo.Roles,
+		SessionRecordingMode:  checker.SSH().SessionRecordingMode(),
+		PinSourceIP:           checker.PinSourceIP(),
 	}, nil
 }
 
