@@ -454,7 +454,7 @@ func openFileNoFollow(file string, flags int, mode os.FileMode) (*os.File, error
 		_ = f.Close()
 		return nil, err
 	}
-	if info.Mode()&os.ModeType != 0 {
+	if !info.Mode().IsRegular() {
 		_ = f.Close()
 		return nil, trace.BadParameter("path does not point to a regular file")
 	}
