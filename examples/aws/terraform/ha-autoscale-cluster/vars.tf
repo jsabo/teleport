@@ -253,6 +253,17 @@ variable "default_tags" {
   default = {}
 }
 
+// Whether to use Amazon Athena for audit event storage instead of DynamoDB.
+// Required for the Access Monitoring feature (identity governance).
+// When enabled, provisions: KMS key, SNS topic, SQS queue + DLQ, two S3 buckets,
+// Glue database + table with partition projection, two Athena workgroups, and an
+// IAM role for Access Monitoring query execution.
+// See https://goteleport.com/docs/identity-governance/access-monitoring/
+variable "enable_athena" {
+  type    = bool
+  default = false
+}
+
 // Whether to trigger instance refresh rollout for Teleport Auth servers when
 // servers when the launch template or configuration changes.
 // Enable this with caution - upgrading Teleport version will trigger an

@@ -157,6 +157,103 @@ EOF
 
 }
 
+// Athena audit backend permissions - only attached when enable_athena = true.
+// Auth service publishes to SNS, consumes from SQS, writes Parquet to S3, and
+// assumes the access_monitoring_role to execute Access Monitoring queries.
+resource "aws_iam_role_policy" "auth_athena" {
+  count = var.enable_athena ? 1 : 0
+  name  = "${var.cluster_name}-auth-athena"
+  role  = aws_iam_role.auth.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "SNSPublish"
+        Effect   = "Allow"
+        Action   = ["sns:Publish"]
+        Resource = aws_sns_topic.audit_topic[0].arn
+      },
+      {
+        Sid    = "SQSConsume"
+        Effect = "Allow"
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes",
+          "sqs:GetQueueUrl",
+        ]
+        Resource = aws_sqs_queue.audit_queue[0].arn
+      },
+      {
+        Sid    = "S3LongTermWrite"
+        Effect = "Allow"
+        Action = [
+          "s3:ListBucketMultipartUploads",
+          "s3:GetBucketLocation",
+          "s3:ListBucketVersions",
+          "s3:ListBucket",
+        ]
+        Resource = [aws_s3_bucket.long_term_storage[0].arn]
+      },
+      {
+        Sid    = "S3LongTermObjects"
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:ListMultipartUploadParts",
+          "s3:GetObjectVersion",
+          "s3:GetObject",
+          "s3:DeleteObjectVersion",
+          "s3:DeleteObject",
+          "s3:AbortMultipartUpload",
+        ]
+        Resource = ["${aws_s3_bucket.long_term_storage[0].arn}/*"]
+      },
+      {
+        Sid    = "S3TransientBucket"
+        Effect = "Allow"
+        Action = [
+          "s3:ListBucketMultipartUploads",
+          "s3:GetBucketLocation",
+          "s3:ListBucketVersions",
+          "s3:ListBucket",
+        ]
+        Resource = [aws_s3_bucket.transient_storage[0].arn]
+      },
+      {
+        Sid    = "S3TransientObjects"
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:ListMultipartUploadParts",
+          "s3:GetObjectVersion",
+          "s3:GetObject",
+          "s3:DeleteObjectVersion",
+          "s3:DeleteObject",
+          "s3:AbortMultipartUpload",
+        ]
+        Resource = ["${aws_s3_bucket.transient_storage[0].arn}/*"]
+      },
+      {
+        Sid    = "KMSAudit"
+        Effect = "Allow"
+        Action = [
+          "kms:GenerateDataKey",
+          "kms:Decrypt",
+        ]
+        Resource = aws_kms_key.audit_key[0].arn
+      },
+      {
+        Sid    = "AssumeAccessMonitoringRole"
+        Effect = "Allow"
+        Action = ["sts:AssumeRole", "sts:TagSession"]
+        Resource = aws_iam_role.access_monitoring_role[0].arn
+      },
+    ]
+  })
+}
+
 // Auth server uses route53 to get certs for domain, this allows
 // read/write operations from the zone.
 resource "aws_iam_role_policy" "auth_route53" {

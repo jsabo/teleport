@@ -14,4 +14,10 @@ TELEPORT_LOCKS_TABLE_NAME=${locks_table_name}
 TELEPORT_S3_BUCKET=${s3_bucket}
 USE_ACM=${use_acm}
 USE_TLS_ROUTING=${use_tls_routing}
+%{ if enable_athena ~}
+TELEPORT_ATHENA_EVENTS_URI="${athena_events_uri}"
+TELEPORT_ACCESS_MONITORING_ROLE_ARN=${access_monitoring_role_arn}
+TELEPORT_ACCESS_MONITORING_REPORT_RESULTS=${access_monitoring_report_results}
+TELEPORT_ACCESS_MONITORING_WORKGROUP=${access_monitoring_workgroup}
+%{ endif ~}
 EOF
