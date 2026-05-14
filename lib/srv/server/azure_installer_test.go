@@ -49,15 +49,15 @@ func (m *mockRunCommandClient) Run(ctx context.Context, req azure.RunCommandRequ
 }
 
 func TestAzureInstallRequestRun(t *testing.T) {
-	makeVM := func(name string) *armcompute.VirtualMachine {
-		return &armcompute.VirtualMachine{
-			ID:   &name,
-			Name: &name,
+	makeVM := func(name string) *azure.DiscoveredVM {
+		return &azure.DiscoveredVM{
+			ID:   name,
+			Name: name,
 		}
 	}
 
-	makeVMs := func(names ...string) []*armcompute.VirtualMachine {
-		var vms []*armcompute.VirtualMachine
+	makeVMs := func(names ...string) []*azure.DiscoveredVM {
+		var vms []*azure.DiscoveredVM
 		for _, name := range names {
 			vms = append(vms, makeVM(name))
 		}
@@ -70,7 +70,7 @@ func TestAzureInstallRequestRun(t *testing.T) {
 
 	tests := []struct {
 		name            string
-		instances       []*armcompute.VirtualMachine
+		instances       []*azure.DiscoveredVM
 		proxyAddrGetter func(context.Context) (string, error)
 
 		wantErr string
@@ -127,9 +127,9 @@ func TestAzureInstallRequestRun(t *testing.T) {
 					mu.Lock()
 					defer mu.Unlock()
 					if result.Failure() {
-						failed = append(failed, *result.Instance.ID)
+						failed = append(failed, result.Instance.ID)
 					} else {
-						good = append(good, *result.Instance.ID)
+						good = append(good, result.Instance.ID)
 					}
 				},
 			}
