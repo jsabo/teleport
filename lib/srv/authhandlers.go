@@ -1048,7 +1048,7 @@ func (a *ahLoginChecker) evaluateScopedProxying(ident *sshca.Identity, ca types.
 		return nil, trace.BadParameter("expected target to be of type *types.ServerV2, got %T", target)
 	}
 
-	agentScope := scopes.Root
+	agentScope := ""
 	if serverV2.Scope != "" {
 		agentScope = serverV2.Scope
 	}
