@@ -106,17 +106,23 @@ func newSFTPHandler(logger *slog.Logger, req *FileTransferRequest, events chan<-
 		}
 		allowed.path = path.Clean(allowedPath)
 
-		// For uploads, Location is the destination — possibly a directory —
-		// and Filename is the name of the file being uploaded. The actual
-		// SFTP write targets path.Join(Location, Filename), so allow
-		// operations on that joined path as well. Reject Filename values
-		// that contain path separators so a client can't escape Location
-		// via the join.
+		// For upload requests, Location is the destination which may
+		// or may not be a directory, and Filename is the name of the
+		// file being uploaded. We want to allow Location/Filename to
+		// be written to, but only if Location is a directory. Otherwise
+		// if Location is a file and the basename of Location is equal to
+		// Filename then Location/Filename/Filename will be allowed to be
+		// written to.
 		if !req.Download && req.Filename != "" {
+			// Ensure Filename is simply a base filename, and isn't a
+			// relative or absolute path, otherwise it could be used to
+			// allow writes outside of Location.
 			if !filepath.IsLocal(req.Filename) {
 				return nil, trace.BadParameter("filename %s must not contain path separators", req.Filename)
 			}
-			allowed.fullPath = path.Join(allowed.path, req.Filename)
+			if fi, err := os.Lstat(allowed.path); err == nil && fi.IsDir() {
+				allowed.fullPath = path.Join(allowed.path, req.Filename)
+			}
 		}
 	}
 

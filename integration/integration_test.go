@@ -8048,7 +8048,7 @@ func testModeratedSFTP(t *testing.T, suite *integrationTestSuite) {
 				require.NoError(t, wf.Close())
 			})
 
-			t.Run("upload 2", func(t *testing.T) {
+			t.Run("attempt upload to non-allowed path", func(t *testing.T) {
 				// Create and approve a file upload request
 				err = tc.sess.RequestFileTransfer(ctx, tracessh.FileTransferReq{
 					Download: false,
@@ -8062,7 +8062,7 @@ func testModeratedSFTP(t *testing.T, suite *integrationTestSuite) {
 				// Location and Filepath joined are also allowed for uploads, but
 				newFile := filepath.Join(reqFile, filename)
 				_, err = sftpClient.OpenFile(newFile, os.O_WRONLY)
-				require.ErrorContains(t, err, fmt.Sprintf("operations are only allowed on %s, not %s", tempDir, newFile))
+				require.ErrorContains(t, err, fmt.Sprintf("operations are only allowed on %s, not %s", reqFile, newFile))
 			})
 		})
 	}
@@ -8082,8 +8082,6 @@ func handleModeratedFileTransfer(t *testing.T, ctx context.Context, modSess *tra
 	// Ignore file transfer request approve event
 	sshRquestIgnoringKeepalives(t, modSSHReqs)
 
-	// Test that only operations needed to complete the download
-	// are allowed
 	transferSess, err := sshClient.NewSession(ctx)
 	require.NoError(t, err)
 	t.Cleanup(func() {
