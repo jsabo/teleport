@@ -192,6 +192,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "transient_storage" {
   rule {
     id     = "expire-transient"
     status = "Enabled"
+    filter {}
     expiration {
       days = 1
     }
