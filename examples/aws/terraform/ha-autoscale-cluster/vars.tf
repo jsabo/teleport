@@ -253,6 +253,40 @@ variable "default_tags" {
   default = {}
 }
 
+// Whether to use Amazon Athena for audit event storage instead of DynamoDB.
+// Required for the Access Monitoring feature (identity governance).
+// When enabled, provisions: KMS key, SNS topic, SQS queue + DLQ, two S3 buckets,
+// Glue database + table with partition projection, two Athena workgroups, and an
+// IAM role for Access Monitoring query execution.
+// See https://goteleport.com/docs/identity-governance/access-monitoring/
+variable "enable_athena" {
+  type    = bool
+  default = false
+}
+
+// Controls the audit event backend during DynamoDB→Athena migration.
+// Only takes effect when enable_athena = true.
+//
+// ""                  — Athena only (default for new clusters, or after migration is complete)
+// "dual_dynamo_primary" — write to both; read from DynamoDB (migration step 2)
+// "dual_athena_primary" — write to both; read from Athena  (migration step 4)
+//
+// Migration sequence:
+//   1. enable_athena=true, athena_migration_mode=""           → Athena only  (fresh cluster)
+//   OR for existing DynamoDB clusters:
+//   2. enable_athena=true, athena_migration_mode="dual_dynamo_primary" → dual write, verify Athena ingestion
+//   3. run the DynamoDB→Athena migration tool (export + republish historical events)
+//   4. athena_migration_mode="dual_athena_primary"            → dual write, verify Athena queries
+//   5. athena_migration_mode=""                               → Athena only
+variable "athena_migration_mode" {
+  type    = string
+  default = ""
+  validation {
+    condition     = contains(["", "dual_dynamo_primary", "dual_athena_primary"], var.athena_migration_mode)
+    error_message = "athena_migration_mode must be \"\", \"dual_dynamo_primary\", or \"dual_athena_primary\"."
+  }
+}
+
 // Whether to trigger instance refresh rollout for Teleport Auth servers when
 // servers when the launch template or configuration changes.
 // Enable this with caution - upgrading Teleport version will trigger an

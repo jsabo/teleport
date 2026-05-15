@@ -74,20 +74,26 @@ resource "aws_launch_template" "auth" {
   user_data = base64encode(templatefile(
     "${path.module}/auth-user-data.tpl",
     {
-      region                   = var.region
-      locks_table_name         = aws_dynamodb_table.locks.name
-      auth_server_addr         = aws_lb.auth.dns_name
-      teleport_auth_type       = var.teleport_auth_type
-      cluster_name             = var.cluster_name
-      dynamo_table_name        = aws_dynamodb_table.teleport.name
-      dynamo_events_table_name = aws_dynamodb_table.teleport_events.name
-      email                    = var.email
-      domain_name              = var.route53_domain
-      s3_bucket                = var.s3_bucket_name
-      license_path             = var.license_path
-      teleport_uid             = var.teleport_uid
-      use_acm                  = var.use_acm
-      use_tls_routing          = var.use_tls_routing
+      region                          = var.region
+      locks_table_name                = aws_dynamodb_table.locks.name
+      auth_server_addr                = aws_lb.auth.dns_name
+      teleport_auth_type              = var.teleport_auth_type
+      cluster_name                    = var.cluster_name
+      dynamo_table_name               = aws_dynamodb_table.teleport.name
+      dynamo_events_table_name        = aws_dynamodb_table.teleport_events.name
+      email                           = var.email
+      domain_name                     = var.route53_domain
+      s3_bucket                       = var.s3_bucket_name
+      license_path                    = var.license_path
+      teleport_uid                    = var.teleport_uid
+      use_acm                         = var.use_acm
+      use_tls_routing                 = var.use_tls_routing
+      enable_athena                    = var.enable_athena
+      athena_events_uri                = local.athena_events_uri
+      athena_migration_mode            = var.athena_migration_mode
+      access_monitoring_role_arn       = local.access_monitoring_role_arn
+      access_monitoring_report_results = local.access_monitoring_report_results
+      access_monitoring_workgroup      = local.access_monitoring_workgroup_name
     }
   ))
 
