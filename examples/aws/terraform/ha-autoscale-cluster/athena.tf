@@ -138,8 +138,9 @@ resource "aws_sqs_queue_policy" "audit_policy" {
 
 // Long-term S3 bucket: Parquet audit event files + Access Monitoring report results.
 resource "aws_s3_bucket" "long_term_storage" {
-  count  = var.enable_athena ? 1 : 0
-  bucket = "${var.cluster_name}-teleport-audit-longterm"
+  count         = var.enable_athena ? 1 : 0
+  bucket        = "${var.cluster_name}-teleport-audit-longterm"
+  force_destroy = true
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "long_term_storage" {
@@ -182,8 +183,9 @@ resource "aws_s3_bucket_public_access_block" "long_term_storage" {
 // Transient S3 bucket: large event payloads + Athena query results.
 // A lifecycle rule expires objects after 1 day to control costs.
 resource "aws_s3_bucket" "transient_storage" {
-  count  = var.enable_athena ? 1 : 0
-  bucket = "${var.cluster_name}-teleport-audit-transient"
+  count         = var.enable_athena ? 1 : 0
+  bucket        = "${var.cluster_name}-teleport-audit-transient"
+  force_destroy = true
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "transient_storage" {
