@@ -316,7 +316,7 @@ resource "aws_athena_workgroup" "workgroup" {
       selected_engine_version = "Athena engine version 3"
     }
     result_configuration {
-      output_location = format("s3://%s/query_results", aws_s3_bucket.transient_storage[0].bucket)
+      output_location = format("s3://%s/results", aws_s3_bucket.transient_storage[0].bucket)
       encryption_configuration {
         encryption_option = "SSE_KMS"
         kms_key_arn       = aws_kms_key.audit_key[0].arn

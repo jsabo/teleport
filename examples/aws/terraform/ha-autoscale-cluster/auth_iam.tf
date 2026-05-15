@@ -169,24 +169,22 @@ resource "aws_iam_role_policy" "auth_athena" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "SNSPublish"
+        Sid      = "AllowPublishSNS"
         Effect   = "Allow"
         Action   = ["sns:Publish"]
         Resource = aws_sns_topic.audit_topic[0].arn
       },
       {
-        Sid    = "SQSConsume"
+        Sid    = "AllowReceiveSQS"
         Effect = "Allow"
         Action = [
           "sqs:ReceiveMessage",
           "sqs:DeleteMessage",
-          "sqs:GetQueueAttributes",
-          "sqs:GetQueueUrl",
         ]
         Resource = aws_sqs_queue.audit_queue[0].arn
       },
       {
-        Sid    = "S3LongTermWrite"
+        Sid    = "AllowListingMultipartUploads"
         Effect = "Allow"
         Action = [
           "s3:ListBucketMultipartUploads",
@@ -194,10 +192,13 @@ resource "aws_iam_role_policy" "auth_athena" {
           "s3:ListBucketVersions",
           "s3:ListBucket",
         ]
-        Resource = [aws_s3_bucket.long_term_storage[0].arn]
+        Resource = [
+          aws_s3_bucket.transient_storage[0].arn,
+          aws_s3_bucket.long_term_storage[0].arn,
+        ]
       },
       {
-        Sid    = "S3LongTermObjects"
+        Sid    = "AllowMultipartAndObjectAccess"
         Effect = "Allow"
         Action = [
           "s3:PutObject",
@@ -208,41 +209,36 @@ resource "aws_iam_role_policy" "auth_athena" {
           "s3:DeleteObject",
           "s3:AbortMultipartUpload",
         ]
-        Resource = ["${aws_s3_bucket.long_term_storage[0].arn}/*"]
-      },
-      {
-        Sid    = "S3TransientBucket"
-        Effect = "Allow"
-        Action = [
-          "s3:ListBucketMultipartUploads",
-          "s3:GetBucketLocation",
-          "s3:ListBucketVersions",
-          "s3:ListBucket",
+        Resource = [
+          "${aws_s3_bucket.transient_storage[0].arn}/results/*",
+          "${aws_s3_bucket.transient_storage[0].arn}/large_payloads/*",
+          "${aws_s3_bucket.long_term_storage[0].arn}/events/*",
         ]
-        Resource = [aws_s3_bucket.transient_storage[0].arn]
       },
       {
-        Sid    = "S3TransientObjects"
-        Effect = "Allow"
-        Action = [
-          "s3:PutObject",
-          "s3:ListMultipartUploadParts",
-          "s3:GetObjectVersion",
-          "s3:GetObject",
-          "s3:DeleteObjectVersion",
-          "s3:DeleteObject",
-          "s3:AbortMultipartUpload",
-        ]
-        Resource = ["${aws_s3_bucket.transient_storage[0].arn}/*"]
-      },
-      {
-        Sid    = "KMSAudit"
+        Sid    = "AllowAthenaKMSUsage"
         Effect = "Allow"
         Action = [
           "kms:GenerateDataKey",
           "kms:Decrypt",
         ]
         Resource = aws_kms_key.audit_key[0].arn
+      },
+      {
+        Sid    = "AllowAthenaQuery"
+        Effect = "Allow"
+        Action = [
+          "glue:GetTable",
+          "athena:StartQueryExecution",
+          "athena:GetQueryResults",
+          "athena:GetQueryExecution",
+        ]
+        Resource = [
+          aws_glue_catalog_table.audit_table[0].arn,
+          aws_glue_catalog_database.audit_db[0].arn,
+          "arn:aws:glue:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:catalog",
+          aws_athena_workgroup.workgroup[0].arn,
+        ]
       },
       {
         Sid    = "AssumeAccessMonitoringRole"

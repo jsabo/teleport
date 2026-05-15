@@ -67,6 +67,12 @@ ExecStart=/usr/local/bin/teleport-patch-athena-config
 [Install]
 WantedBy=multi-user.target
 SVCUNIT
+mkdir -p /etc/systemd/system/teleport-auth.service.d
+cat >/etc/systemd/system/teleport-auth.service.d/after-athena-patch.conf <<'DROPIN'
+[Unit]
+After=teleport-patch-athena-config.service
+Requires=teleport-patch-athena-config.service
+DROPIN
 systemctl daemon-reload
 systemctl enable teleport-patch-athena-config.service
 %{ endif ~}
