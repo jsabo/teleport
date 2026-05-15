@@ -88,11 +88,12 @@ resource "aws_launch_template" "auth" {
       teleport_uid                    = var.teleport_uid
       use_acm                         = var.use_acm
       use_tls_routing                 = var.use_tls_routing
-      enable_athena                   = var.enable_athena
-      athena_events_uri               = local.athena_events_uri
-      access_monitoring_role_arn      = local.access_monitoring_role_arn
+      enable_athena                    = var.enable_athena
+      athena_events_uri                = local.athena_events_uri
+      athena_migration_mode            = var.athena_migration_mode
+      access_monitoring_role_arn       = local.access_monitoring_role_arn
       access_monitoring_report_results = local.access_monitoring_report_results
-      access_monitoring_workgroup     = local.access_monitoring_workgroup_name
+      access_monitoring_workgroup      = local.access_monitoring_workgroup_name
     }
   ))
 

@@ -15,6 +15,7 @@ setup_file() {
     # generate config
     run ${BATS_TEST_DIRNAME?}/../bin/teleport-generate-config
     export GENERATE_EXIT_CODE=$?
+    if declare -f post_generate_hook > /dev/null; then post_generate_hook; fi
     # store all the lines in a given block, stops capturing on newlines
     # any use of the block must be quoted to retain newlines
     export TELEPORT_BLOCK=$(awk '/teleport:/,/^$/' ${TELEPORT_CONFIG_PATH?})

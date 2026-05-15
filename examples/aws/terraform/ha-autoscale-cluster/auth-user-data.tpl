@@ -19,22 +19,31 @@ TELEPORT_ATHENA_EVENTS_URI="${athena_events_uri}"
 TELEPORT_ACCESS_MONITORING_ROLE_ARN=${access_monitoring_role_arn}
 TELEPORT_ACCESS_MONITORING_REPORT_RESULTS=${access_monitoring_report_results}
 TELEPORT_ACCESS_MONITORING_WORKGROUP=${access_monitoring_workgroup}
+TELEPORT_ATHENA_MIGRATION_MODE=${athena_migration_mode}
 %{ endif ~}
 EOF
 %{ if enable_athena ~}
 cat >/usr/local/bin/teleport-patch-athena-config <<'PATCHSCRIPT'
 #!/bin/bash
 set -e
-source /etc/teleport.d/conf
+source $${TELEPORT_CONFD_DIR:-/etc/teleport.d}/conf
 [[ -z "$TELEPORT_ATHENA_EVENTS_URI" ]] && exit 0
-CONFIG=/etc/teleport.yaml
-python3 -c "
-import sys
-path, uri = sys.argv[1], sys.argv[2]
-with open(path) as f: lines = f.readlines()
-lines = ['    audit_events_uri: ' + uri + '\n' if '    audit_events_uri: dynamodb://' in l else l for l in lines]
-with open(path, 'w') as f: f.writelines(lines)
-" "$CONFIG" "$TELEPORT_ATHENA_EVENTS_URI"
+CONFIG=$${TELEPORT_CONFIG_PATH:-/etc/teleport.yaml}
+while IFS= read -r line; do
+  if [[ "$line" == "    audit_events_uri: dynamodb://"* ]]; then
+    DYNAMO_URI="$${line#    audit_events_uri: }"
+    case "$TELEPORT_ATHENA_MIGRATION_MODE" in
+      dual_dynamo_primary)
+        printf "    audit_events_uri: ['%s', '%s']\n" "$DYNAMO_URI" "$TELEPORT_ATHENA_EVENTS_URI" ;;
+      dual_athena_primary)
+        printf "    audit_events_uri: ['%s', '%s']\n" "$TELEPORT_ATHENA_EVENTS_URI" "$DYNAMO_URI" ;;
+      *)
+        printf "    audit_events_uri: '%s'\n" "$TELEPORT_ATHENA_EVENTS_URI" ;;
+    esac
+  else
+    printf '%s\n' "$line"
+  fi
+done < "$CONFIG" > "$CONFIG.tmp" && mv "$CONFIG.tmp" "$CONFIG"
 if ! grep -q "access_monitoring:" "$CONFIG"; then
 cat >> "$CONFIG" <<ACFG
   access_monitoring:
