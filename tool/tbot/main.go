@@ -128,6 +128,8 @@ func Run(args []string, stdout io.Writer) error {
 			return onWaitCommand(ctx, wc)
 		}),
 
+		cli.NewElevateCommand(app, buildConfigAndStart(ctx, globalCfg)),
+
 		// `start` and `configure` commands
 		cli.NewLegacyCommand(startCmd, buildConfigAndStart(ctx, globalCfg), cli.CommandModeStart),
 		cli.NewLegacyCommand(configureCmd, buildConfigAndConfigure(ctx, globalCfg, &configureOutPath, stdout), cli.CommandModeConfigure),
