@@ -60,6 +60,7 @@ func OutputV2ServiceBuilder(cfg *OutputV2Config, opts ...OutputV2Option) bot.Ser
 		}
 		svc := &OutputV2Service{
 			botAuthClient:             deps.Client,
+			getBotIdentity:            deps.BotIdentity,
 			botIdentityReadyCh:        deps.BotIdentityReadyCh,
 			defaultCredentialLifetime: bot.DefaultCredentialLifetime,
 			cfg:                       cfg,
@@ -94,6 +95,7 @@ type OutputV2Service struct {
 	// This will not have any roles impersonated and should only be used to
 	// fetch CAs.
 	botAuthClient             *apiclient.Client
+	getBotIdentity            func() *identity.Identity
 	botIdentityReadyCh        <-chan struct{}
 	defaultCredentialLifetime bot.CredentialLifetime
 	cfg                       *OutputV2Config
@@ -171,6 +173,21 @@ func (s *OutputV2Service) generate(ctx context.Context) error {
 
 	if s.cfg.DelegationSessionID != "" {
 		opts = append(opts, identity.WithDelegation(s.cfg.DelegationSessionID))
+	}
+	if s.cfg.AccessRequest != nil {
+		// Blocks until a reviewer resolves the request. The resulting identity
+		// carries the roles the request granted instead of impersonated ones.
+		requestID, err := internal.RequestAccess(
+			ctx,
+			s.botAuthClient,
+			s.getBotIdentity().TLSIdentity.Username,
+			s.cfg.AccessRequest,
+			s.log,
+		)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		opts = append(opts, identity.WithAccessRequests([]string{requestID}))
 	}
 
 	id, err := s.identityGenerator.GenerateFacade(ctx, opts...)

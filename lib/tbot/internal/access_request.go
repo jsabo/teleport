@@ -16,7 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package identity
+package internal
 
 import (
 	"context"
@@ -42,7 +42,7 @@ var ErrAccessRequestDenied = &trace.AccessDeniedError{Message: "access request w
 // server refuses AccessRequests from role-impersonated identities
 // ("impersonated user can not request new roles"), and every credential tbot
 // hands to a workload is impersonated. Only the bot itself can make this call.
-func requestAccess(
+func RequestAccess(
 	ctx context.Context,
 	clt *apiclient.Client,
 	botUser string,
@@ -192,4 +192,41 @@ func timeoutErr(ctx context.Context, timeout time.Duration) error {
 		return trace.LimitExceeded("no reviewer resolved the access request within %s", timeout)
 	}
 	return ctx.Err()
+}
+
+// AccessRequestConfig requests roles just-in-time instead of impersonating
+// them directly. The bot must be allowed to request the roles listed here
+// (`spec.allow.request.roles` on its role) or creating the request is denied.
+type AccessRequestConfig struct {
+	// Roles to request. Required.
+	Roles []string `yaml:"roles"`
+	// Reason shown to reviewers. Some clusters require one.
+	Reason string `yaml:"reason,omitempty"`
+	// Reviewers to suggest for the request.
+	Reviewers []string `yaml:"reviewers,omitempty"`
+	// MaxDuration optionally caps how long the granted access lasts.
+	MaxDuration time.Duration `yaml:"max_duration,omitempty"`
+	// Timeout bounds how long to wait for a reviewer. Defaults to
+	// defaultAccessRequestTimeout; the wait is otherwise unbounded, which would
+	// hang a bot forever behind an unattended request.
+	Timeout time.Duration `yaml:"timeout,omitempty"`
+}
+
+// defaultAccessRequestTimeout bounds the wait for a review.
+const defaultAccessRequestTimeout = 10 * time.Minute
+
+func (c *AccessRequestConfig) CheckAndSetDefaults() error {
+	if len(c.Roles) == 0 {
+		return trace.BadParameter("access_request: roles is required")
+	}
+	if c.Timeout == 0 {
+		c.Timeout = defaultAccessRequestTimeout
+	}
+	if c.Timeout < 0 {
+		return trace.BadParameter("access_request: timeout must not be negative")
+	}
+	if c.MaxDuration < 0 {
+		return trace.BadParameter("access_request: max_duration must not be negative")
+	}
+	return nil
 }
