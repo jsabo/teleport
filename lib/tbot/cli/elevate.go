@@ -24,6 +24,7 @@ import (
 
 	"github.com/gravitational/trace"
 
+	"github.com/gravitational/teleport/lib/tbot/bot"
 	"github.com/gravitational/teleport/lib/tbot/config"
 	"github.com/gravitational/teleport/lib/tbot/internal"
 	"github.com/gravitational/teleport/lib/tbot/services/identity"
@@ -47,6 +48,7 @@ type ElevateCommand struct {
 	Reviewers   []string
 	MaxDuration time.Duration
 	Timeout     time.Duration
+	TTL         time.Duration
 	Cluster     string
 	KubeCluster string
 }
@@ -69,6 +71,8 @@ func NewElevateCommand(app KingpinClause, action MutatorAction) *ElevateCommand 
 		StringsVar(&c.Reviewers)
 	cmd.Flag("max-duration", "How long the granted access may last.").
 		DurationVar(&c.MaxDuration)
+	cmd.Flag("ttl", "Lifetime of the issued credentials.").
+		DurationVar(&c.TTL)
 	cmd.Flag("timeout", "How long to wait for a reviewer before giving up.").
 		DurationVar(&c.Timeout)
 	cmd.Flag("cluster", "Issue the identity for this leaf cluster.").
@@ -103,19 +107,26 @@ func (c *ElevateCommand) ApplyConfig(cfg *config.BotConfig, l *slog.Logger) erro
 
 	// A kubeconfig is what most remediation tooling consumes, so producing one
 	// directly saves the caller assembling it from an identity file.
+	var lifetime bot.CredentialLifetime
+	if c.TTL > 0 {
+		lifetime.TTL = c.TTL
+	}
+
 	if c.KubeCluster != "" {
 		cfg.Services = append(cfg.Services, &k8s.OutputV2Config{
-			Destination:   dest,
-			Selectors:     []*k8s.KubernetesSelector{{Name: c.KubeCluster}},
-			AccessRequest: request,
+			Destination:        dest,
+			Selectors:          []*k8s.KubernetesSelector{{Name: c.KubeCluster}},
+			AccessRequest:      request,
+			CredentialLifetime: lifetime,
 		})
 		return nil
 	}
 
 	cfg.Services = append(cfg.Services, &identity.OutputConfig{
-		Destination:   dest,
-		Cluster:       c.Cluster,
-		AccessRequest: request,
+		Destination:        dest,
+		Cluster:            c.Cluster,
+		AccessRequest:      request,
+		CredentialLifetime: lifetime,
 	})
 
 	return nil
