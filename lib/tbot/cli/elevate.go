@@ -25,7 +25,9 @@ import (
 	"github.com/gravitational/trace"
 
 	"github.com/gravitational/teleport/lib/tbot/config"
+	"github.com/gravitational/teleport/lib/tbot/internal"
 	"github.com/gravitational/teleport/lib/tbot/services/identity"
+	"github.com/gravitational/teleport/lib/tbot/services/k8s"
 )
 
 // ElevateCommand implements `tbot elevate`: obtain credentials for roles the
@@ -46,6 +48,7 @@ type ElevateCommand struct {
 	MaxDuration time.Duration
 	Timeout     time.Duration
 	Cluster     string
+	KubeCluster string
 }
 
 // NewElevateCommand initializes the command and flags for `tbot elevate`.
@@ -70,6 +73,8 @@ func NewElevateCommand(app KingpinClause, action MutatorAction) *ElevateCommand 
 		DurationVar(&c.Timeout)
 	cmd.Flag("cluster", "Issue the identity for this leaf cluster.").
 		StringVar(&c.Cluster)
+	cmd.Flag("kube-cluster", "Write a kubeconfig for this Kubernetes cluster instead of an identity file.").
+		StringVar(&c.KubeCluster)
 
 	return c
 }
@@ -88,16 +93,29 @@ func (c *ElevateCommand) ApplyConfig(cfg *config.BotConfig, l *slog.Logger) erro
 	// caller for --oneshot, so the renewal trap cannot be configured at all.
 	cfg.Oneshot = true
 
+	request := &internal.AccessRequestConfig{
+		Roles:       c.Roles,
+		Reason:      c.Reason,
+		Reviewers:   c.Reviewers,
+		MaxDuration: c.MaxDuration,
+		Timeout:     c.Timeout,
+	}
+
+	// A kubeconfig is what most remediation tooling consumes, so producing one
+	// directly saves the caller assembling it from an identity file.
+	if c.KubeCluster != "" {
+		cfg.Services = append(cfg.Services, &k8s.OutputV2Config{
+			Destination:   dest,
+			Selectors:     []*k8s.KubernetesSelector{{Name: c.KubeCluster}},
+			AccessRequest: request,
+		})
+		return nil
+	}
+
 	cfg.Services = append(cfg.Services, &identity.OutputConfig{
-		Destination: dest,
-		Cluster:     c.Cluster,
-		AccessRequest: &identity.AccessRequestConfig{
-			Roles:       c.Roles,
-			Reason:      c.Reason,
-			Reviewers:   c.Reviewers,
-			MaxDuration: c.MaxDuration,
-			Timeout:     c.Timeout,
-		},
+		Destination:   dest,
+		Cluster:       c.Cluster,
+		AccessRequest: request,
 	})
 
 	return nil

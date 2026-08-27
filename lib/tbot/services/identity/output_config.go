@@ -20,7 +20,6 @@ package identity
 
 import (
 	"context"
-	"time"
 
 	"github.com/gravitational/trace"
 	"gopkg.in/yaml.v3"
@@ -110,42 +109,9 @@ type OutputConfig struct {
 	CredentialLifetime bot.CredentialLifetime `yaml:",inline"`
 }
 
-// AccessRequestConfig requests roles just-in-time instead of impersonating
-// them directly. The bot must be allowed to request the roles listed here
-// (`spec.allow.request.roles` on its role) or creating the request is denied.
-type AccessRequestConfig struct {
-	// Roles to request. Required.
-	Roles []string `yaml:"roles"`
-	// Reason shown to reviewers. Some clusters require one.
-	Reason string `yaml:"reason,omitempty"`
-	// Reviewers to suggest for the request.
-	Reviewers []string `yaml:"reviewers,omitempty"`
-	// MaxDuration optionally caps how long the granted access lasts.
-	MaxDuration time.Duration `yaml:"max_duration,omitempty"`
-	// Timeout bounds how long to wait for a reviewer. Defaults to
-	// defaultAccessRequestTimeout; the wait is otherwise unbounded, which would
-	// hang a bot forever behind an unattended request.
-	Timeout time.Duration `yaml:"timeout,omitempty"`
-}
-
-// defaultAccessRequestTimeout bounds the wait for a review.
-const defaultAccessRequestTimeout = 10 * time.Minute
-
-func (c *AccessRequestConfig) CheckAndSetDefaults() error {
-	if len(c.Roles) == 0 {
-		return trace.BadParameter("access_request: roles is required")
-	}
-	if c.Timeout == 0 {
-		c.Timeout = defaultAccessRequestTimeout
-	}
-	if c.Timeout < 0 {
-		return trace.BadParameter("access_request: timeout must not be negative")
-	}
-	if c.MaxDuration < 0 {
-		return trace.BadParameter("access_request: max_duration must not be negative")
-	}
-	return nil
-}
+// AccessRequestConfig is an alias for the shared type, so existing YAML and
+// callers referring to identity.AccessRequestConfig keep working.
+type AccessRequestConfig = internal.AccessRequestConfig
 
 // GetName returns the user-given name of the service, used for validation purposes.
 func (o *OutputConfig) GetName() string {
