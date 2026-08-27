@@ -109,7 +109,10 @@ func (c *ElevateCommand) ApplyConfig(cfg *config.BotConfig, l *slog.Logger) erro
 	// directly saves the caller assembling it from an identity file.
 	var lifetime bot.CredentialLifetime
 	if c.TTL > 0 {
+		// Both fields must be set together, but nothing is ever renewed here:
+		// the command exits once the credentials are written.
 		lifetime.TTL = c.TTL
+		lifetime.RenewalInterval = c.TTL
 	}
 
 	if c.KubeCluster != "" {
