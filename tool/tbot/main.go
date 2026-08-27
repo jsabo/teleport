@@ -51,6 +51,13 @@ var log = logutils.NewPackageLogger(teleport.ComponentKey, teleport.ComponentTBo
 
 func main() {
 	if err := Run(os.Args[1:], os.Stdout); err != nil {
+		// A denied access request is a decision, not a malfunction. Report it
+		// distinctly so callers gating an action on this command can tell the
+		// two apart.
+		if cli.IsAccessRequestDenied(err) {
+			fmt.Fprintln(os.Stderr, "Access request denied.")
+			os.Exit(cli.ExitCodeAccessRequestDenied)
+		}
 		utils.FatalError(err)
 	}
 }
