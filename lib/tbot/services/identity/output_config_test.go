@@ -86,6 +86,35 @@ func TestIdentityOutput_CheckAndSetDefaults(t *testing.T) {
 			wantErr: "no destination configured for output",
 		},
 		{
+			name: "access request",
+			in: func() *OutputConfig {
+				return &OutputConfig{
+					Destination:   destination.NewMemory(),
+					SSHConfigMode: SSHConfigModeOn,
+					AccessRequest: &AccessRequestConfig{Roles: []string{"editor"}},
+				}
+			},
+			want: &OutputConfig{
+				Destination:   destination.NewMemory(),
+				SSHConfigMode: SSHConfigModeOn,
+				AccessRequest: &AccessRequestConfig{
+					Roles:   []string{"editor"},
+					Timeout: 10 * time.Minute,
+				},
+			},
+		},
+		{
+			name: "access request without roles",
+			in: func() *OutputConfig {
+				return &OutputConfig{
+					Destination:   destination.NewMemory(),
+					SSHConfigMode: SSHConfigModeOn,
+					AccessRequest: &AccessRequestConfig{},
+				}
+			},
+			wantErr: "access_request: roles is required",
+		},
+		{
 			name: "invalid ssh config mode",
 			in: func() *OutputConfig {
 				return &OutputConfig{
