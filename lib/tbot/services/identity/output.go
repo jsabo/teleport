@@ -56,6 +56,7 @@ func OutputServiceBuilder(
 		}
 		svc := &OutputService{
 			botAuthClient:             deps.Client,
+			getBotIdentity:            deps.BotIdentity,
 			botIdentityReadyCh:        deps.BotIdentityReadyCh,
 			defaultCredentialLifetime: defaultCredentialLifetime,
 			insecure:                  insecure,
@@ -83,6 +84,7 @@ type OutputService struct {
 	// This will not have any roles impersonated and should only be used to
 	// fetch CAs.
 	botAuthClient             *apiclient.Client
+	getBotIdentity            func() *identity.Identity
 	botIdentityReadyCh        <-chan struct{}
 	defaultCredentialLifetime bot.CredentialLifetime
 	insecure, fips            bool
@@ -166,6 +168,21 @@ func (s *OutputService) generate(ctx context.Context) error {
 		identityOpts = append(identityOpts, identity.WithRoles(s.cfg.Roles))
 	} else {
 		identityOpts = append(identityOpts, identity.WithDelegation(s.cfg.DelegationSessionID))
+	}
+	if s.cfg.AccessRequest != nil {
+		// Blocks until a reviewer resolves the request. The resulting identity
+		// carries the roles the request granted instead of impersonated ones.
+		requestID, err := requestAccess(
+			ctx,
+			s.botAuthClient,
+			s.getBotIdentity().TLSIdentity.Username,
+			s.cfg.AccessRequest,
+			s.log,
+		)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		identityOpts = append(identityOpts, identity.WithAccessRequests([]string{requestID}))
 	}
 	id, err := s.identityGenerator.GenerateFacade(ctx, identityOpts...)
 	if err != nil {

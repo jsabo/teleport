@@ -215,6 +215,22 @@ func WithReissuableRoleImpersonation(allow bool) GenerateOption {
 	}
 }
 
+// WithAccessRequests attaches approved access requests to the certificates
+// request, so the resulting identity carries the roles those requests granted.
+//
+// This replaces role impersonation rather than supplementing it: the auth
+// server rejects a request that sets both RoleRequests and AccessRequests, so
+// callers must not combine this with configured roles.
+func WithAccessRequests(ids []string) GenerateOption {
+	return func(opts *generateOpts) {
+		opts.requestModifiers = append(opts.requestModifiers, func(req *proto.UserCertsRequest) {
+			req.AccessRequests = ids
+			req.RoleRequests = nil
+			req.UseRoleRequests = false
+		})
+	}
+}
+
 // WithRouteToCluster sets the RouteToCluster field on the certificates request.
 func WithRouteToCluster(cluster string) GenerateOption {
 	return func(opts *generateOpts) {
