@@ -77,6 +77,12 @@ type OutputV2Config struct {
 	// generated credentials will be associated with, enabling the bot to act
 	// on a (human) user's behalf.
 	DelegationSessionID string `yaml:"delegation_session_id,omitempty"`
+
+	// AccessRequest obtains the credentials' roles through a just-in-time
+	// access request rather than role impersonation. Intended for one-shot use
+	// (`tbot elevate`); in a long-running bot every renewal would file a new
+	// request and block on a human.
+	AccessRequest *internal.AccessRequestConfig `yaml:"access_request,omitempty"`
 }
 
 // GetName returns the user-given name of the service, used for validation purposes.

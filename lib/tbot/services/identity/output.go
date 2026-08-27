@@ -172,7 +172,7 @@ func (s *OutputService) generate(ctx context.Context) error {
 	if s.cfg.AccessRequest != nil {
 		// Blocks until a reviewer resolves the request. The resulting identity
 		// carries the roles the request granted instead of impersonated ones.
-		requestID, err := requestAccess(
+		requestID, err := internal.RequestAccess(
 			ctx,
 			s.botAuthClient,
 			s.getBotIdentity().TLSIdentity.Username,
